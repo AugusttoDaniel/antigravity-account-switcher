@@ -1,4 +1,4 @@
-module github.com/Muriel-Gasparini/antigravity-account-switcher
+module github.com/AugusttoDaniel/antigravity-account-switcher
 
 go 1.24.0
 

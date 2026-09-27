@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Muriel-Gasparini/antigravity-account-switcher/internal/config"
+	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/config"
 )
 
 // runCLIInSubprocess executes runConfig in a child test process to test commands that invoke os.Exit(1).

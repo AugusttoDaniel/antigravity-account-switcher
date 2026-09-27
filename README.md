@@ -4,8 +4,8 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Go Version](https://img.shields.io/badge/Go-1.24%2B-00ADD8?logo=go)](https://go.dev/)
-[![CI Status](https://github.com/Muriel-Gasparini/antigravity-account-switcher/actions/workflows/ci.yml/badge.svg)](https://github.com/Muriel-Gasparini/antigravity-account-switcher/actions)
-[![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/Muriel-Gasparini/antigravity-account-switcher?utm_source=oss&utm_medium=github&utm_campaign=Muriel-Gasparini%2Fantigravity-account-switcher&labelColor=171717&color=FF570A&link=https%3A%2F%2Fcoderabbit.ai&label=CodeRabbit+Reviews)](https://coderabbit.ai)
+[![CI Status](https://github.com/AugusttoDaniel/antigravity-account-switcher/actions/workflows/ci.yml/badge.svg)](https://github.com/AugusttoDaniel/antigravity-account-switcher/actions)
+[![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/AugusttoDaniel/antigravity-account-switcher?utm_source=oss&utm_medium=github&utm_campaign=AugusttoDaniel%2Fantigravity-account-switcher&labelColor=171717&color=FF570A&link=https%3A%2F%2Fcoderabbit.ai&label=CodeRabbit+Reviews)](https://coderabbit.ai)
 
 Automatic Multi-Account Pool Management, Real-Time Quota Tracking, and Seamless HTTP 429 Failover for **Google Antigravity 2.0** and CLI (`agy`).
 
@@ -101,7 +101,7 @@ antigravity-account-switcher launch --bin /path/to/your/antigravity
 
 ### 1. Build and Install the Switcher
 ```bash
-git clone https://github.com/Muriel-Gasparini/antigravity-account-switcher.git
+git clone https://github.com/AugusttoDaniel/antigravity-account-switcher.git
 cd antigravity-account-switcher
 make install
 ```
@@ -205,6 +205,12 @@ When switching between model providers (e.g. Claude <-> Gemini) or continuing mu
 - The proxy intercepts the HTTP 400 response before it reaches the client.
 - It applies payload sanitization via structural visitors (`skip_thought_signature_validator` injection or HMAC thought block pruning) while preserving complete user chat history.
 - The request is instantly replayed in memory to Google Cloud Code PA, ensuring agent thinking continues seamlessly without crashing the editor or losing conversation context.
+
+### 4. Per-Account Custom Outbound Proxy (Webshare / Residential Support)
+To prevent IP-based rate limits across multiple Google accounts, each account in your pool can be assigned its own dedicated HTTP/HTTPS outbound proxy (e.g., `http://usr123:pass@p.webshare.io:80`):
+- **Account IP Isolation**: When requests are dispatched for a specific account, the switcher routes outbound Google Cloud Code PA traffic through that account's configured proxy.
+- **Easy Configuration**: Edit or clear the outbound proxy URL directly from the Web Dashboard card for any account by clicking **Edit Proxy**.
+- **Secure Password Masking**: Outbound proxy credentials are safely masked in the Web UI (and hidden in Privacy Mode).
 
 ---
 

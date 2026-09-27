@@ -22,7 +22,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Muriel-Gasparini/antigravity-account-switcher/internal/domain"
+	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/domain"
 	"github.com/google/uuid"
 )
 

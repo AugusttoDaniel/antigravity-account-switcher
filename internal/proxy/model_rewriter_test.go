@@ -10,8 +10,8 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/Muriel-Gasparini/antigravity-account-switcher/internal/domain"
-	"github.com/Muriel-Gasparini/antigravity-account-switcher/internal/proxy"
+	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/domain"
+	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/proxy"
 )
 
 // generateTestPayload constructs a valid JSON payload containing model and filler text of targetSize.

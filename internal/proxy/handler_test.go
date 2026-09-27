@@ -16,9 +16,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Muriel-Gasparini/antigravity-account-switcher/internal/domain"
-	"github.com/Muriel-Gasparini/antigravity-account-switcher/internal/store/sqlite"
-	"github.com/Muriel-Gasparini/antigravity-account-switcher/test/mocks"
+	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/domain"
+	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/store/sqlite"
+	"github.com/AugusttoDaniel/antigravity-account-switcher/test/mocks"
 )
 
 func setupTestDB(t *testing.T) (*sqlite.DB, domain.AccountRepository, domain.MetricsRepository, domain.EventRepository) {

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Muriel-Gasparini/antigravity-account-switcher/internal/config"
+	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/config"
 )
 
 // TestCLI_PrecedenceMatrix verifies the complete 4-tier precedence hierarchy:

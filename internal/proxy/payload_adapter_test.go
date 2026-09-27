@@ -5,7 +5,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/Muriel-Gasparini/antigravity-account-switcher/internal/proxy"
+	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/proxy"
 )
 
 // ---------------------------------------------------------------------------

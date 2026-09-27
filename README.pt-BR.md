@@ -4,8 +4,8 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Go Version](https://img.shields.io/badge/Go-1.24%2B-00ADD8?logo=go)](https://go.dev/)
-[![CI Status](https://github.com/Muriel-Gasparini/antigravity-account-switcher/actions/workflows/ci.yml/badge.svg)](https://github.com/Muriel-Gasparini/antigravity-account-switcher/actions)
-[![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/Muriel-Gasparini/antigravity-account-switcher?utm_source=oss&utm_medium=github&utm_campaign=Muriel-Gasparini%2Fantigravity-account-switcher&labelColor=171717&color=FF570A&link=https%3A%2F%2Fcoderabbit.ai&label=CodeRabbit+Reviews)](https://coderabbit.ai)
+[![CI Status](https://github.com/AugusttoDaniel/antigravity-account-switcher/actions/workflows/ci.yml/badge.svg)](https://github.com/AugusttoDaniel/antigravity-account-switcher/actions)
+[![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/AugusttoDaniel/antigravity-account-switcher?utm_source=oss&utm_medium=github&utm_campaign=AugusttoDaniel%2Fantigravity-account-switcher&labelColor=171717&color=FF570A&link=https%3A%2F%2Fcoderabbit.ai&label=CodeRabbit+Reviews)](https://coderabbit.ai)
 
 Gerenciamento automático de pool de contas, monitoramento de cotas em tempo real e failover transparente em erros HTTP 429 para o **Google Antigravity 2.0** e CLI (`agy`).
 
@@ -101,7 +101,7 @@ antigravity-account-switcher launch --bin /caminho/para/seu/antigravity
 
 ### 1. Compilar e Instalar o Switcher
 ```bash
-git clone https://github.com/Muriel-Gasparini/antigravity-account-switcher.git
+git clone https://github.com/AugusttoDaniel/antigravity-account-switcher.git
 cd antigravity-account-switcher
 make install
 ```
@@ -205,6 +205,12 @@ Ao alternar entre provedores de modelos (ex.: Claude <-> Gemini) ou em sessões 
 - O proxy intercepta a resposta HTTP 400 antes que ela chegue ao cliente.
 - Aplica sanitização transparente no payload (injetando `skip_thought_signature_validator` ou limpando blocos de HMAC incompatíveis) preservando todo o histórico de conversação do usuário.
 - Reenvia a requisição imediatamente em memória para o Google Cloud Code PA, garantindo que o agente continue pensando sem travar o editor ou interromper a sessão de código.
+
+### 4. Proxy de Saída Personalizado por Conta (Suporte Webshare / Proxies Residenciais)
+Para evitar limites de taxa baseados em IP entre múltiplas contas Google, cada conta no pool pode receber seu próprio proxy HTTP/HTTPS de saída dedicado (ex.: `http://usr123:pass@p.webshare.io:80`):
+- **Isolamento de IP por Conta**: Ao despachar requisições para uma conta específica, o switcher roteia o tráfego do Google Cloud Code PA através do proxy configurado para aquela conta.
+- **Configuração Fácil**: Edite ou remova a URL do proxy de saída diretamente no card da conta no Dashboard Web clicando em **Edit Proxy**.
+- **Ofuscação Segura de Senhas**: Credenciais de proxy de saída são ofuscadas com segurança na interface web (e completamente ocultas no Modo Privacidade).
 
 ---
 

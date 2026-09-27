@@ -10,7 +10,7 @@ import (
 	"strings"
 	"unsafe"
 
-	"github.com/Muriel-Gasparini/antigravity-account-switcher/internal/domain"
+	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/domain"
 )
 
 var (

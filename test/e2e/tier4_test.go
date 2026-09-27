@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Muriel-Gasparini/antigravity-account-switcher/internal/launcher"
-	"github.com/Muriel-Gasparini/antigravity-account-switcher/internal/store/sqlite"
+	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/launcher"
+	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/store/sqlite"
 )
 
 // TestTier4_LauncherCoupledLifecycle_AndZeroEnvironmentPollution validates that:

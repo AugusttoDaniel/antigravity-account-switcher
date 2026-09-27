@@ -16,9 +16,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Muriel-Gasparini/antigravity-account-switcher/internal/config"
-	"github.com/Muriel-Gasparini/antigravity-account-switcher/internal/domain"
-	"github.com/Muriel-Gasparini/antigravity-account-switcher/test/mocks"
+	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/config"
+	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/domain"
+	"github.com/AugusttoDaniel/antigravity-account-switcher/test/mocks"
 )
 
 const (

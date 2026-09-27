@@ -13,10 +13,10 @@ import (
 	"time"
 	_ "time/tzdata"
 
-	"github.com/Muriel-Gasparini/antigravity-account-switcher/internal/config"
-	"github.com/Muriel-Gasparini/antigravity-account-switcher/internal/domain"
-	"github.com/Muriel-Gasparini/antigravity-account-switcher/internal/oauth"
-	"github.com/Muriel-Gasparini/antigravity-account-switcher/internal/quota"
+	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/config"
+	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/domain"
+	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/oauth"
+	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/quota"
 )
 
 // FallbackConfigSetter defines an interface for dynamically updating model fallback settings at runtime.

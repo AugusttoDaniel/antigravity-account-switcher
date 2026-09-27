@@ -8,14 +8,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Muriel-Gasparini/antigravity-account-switcher/internal/domain"
-	"github.com/Muriel-Gasparini/antigravity-account-switcher/internal/metrics"
-	"github.com/Muriel-Gasparini/antigravity-account-switcher/internal/oauth"
-	"github.com/Muriel-Gasparini/antigravity-account-switcher/internal/proxy"
-	"github.com/Muriel-Gasparini/antigravity-account-switcher/internal/quota"
-	"github.com/Muriel-Gasparini/antigravity-account-switcher/internal/store/sqlite"
-	"github.com/Muriel-Gasparini/antigravity-account-switcher/internal/web"
-	"github.com/Muriel-Gasparini/antigravity-account-switcher/test/mocks"
+	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/domain"
+	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/metrics"
+	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/oauth"
+	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/proxy"
+	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/quota"
+	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/store/sqlite"
+	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/web"
+	"github.com/AugusttoDaniel/antigravity-account-switcher/test/mocks"
 )
 
 // TestEnvironment coordinates mock Google servers, SQLite database, and the switcher server.
