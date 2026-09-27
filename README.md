@@ -336,6 +336,13 @@ Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for de
 
 ---
 
+## Credits & Original Author
+
+This project was originally created and developed by **[Muriel Gasparini](https://github.com/Muriel-Gasparini)** ([Muriel-Gasparini/antigravity-account-switcher](https://github.com/Muriel-Gasparini/antigravity-account-switcher)).  
+Maintained and updated by **[AugusttoDaniel](https://github.com/AugusttoDaniel)**.
+
+---
+
 ## License
 
 MIT License © 2026 Muriel Gasparini. See [LICENSE](LICENSE) for details.
