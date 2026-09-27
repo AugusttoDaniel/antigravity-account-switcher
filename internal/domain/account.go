@@ -26,6 +26,7 @@ type Account struct {
 	RefreshToken string        `json:"-"` // Omit credentials from JSON serialization for security
 	AccessToken  string        `json:"-"` // Omit credentials from JSON serialization for security
 	TokenExpiry  time.Time     `json:"token_expiry"`
+	ProxyURL     string        `json:"proxy_url,omitempty"` // Optional outbound proxy URL (e.g. Webshare http://user:pass@host:port)
 	IsActive     bool          `json:"is_active"`
 	Status       AccountStatus `json:"status"`
 	CreatedAt    time.Time     `json:"created_at"`
@@ -75,6 +76,9 @@ type AccountRepository interface {
 
 	// UpdateRefreshToken updates the long-lived refresh token.
 	UpdateRefreshToken(ctx context.Context, id string, refreshToken string) error
+
+	// UpdateProxyURL updates the custom outbound proxy URL for an account.
+	UpdateProxyURL(ctx context.Context, id string, proxyURL string) error
 
 	// Delete removes an account and cascades deletion to buckets and metrics.
 	Delete(ctx context.Context, id string) error

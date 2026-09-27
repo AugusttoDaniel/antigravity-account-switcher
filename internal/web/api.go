@@ -180,6 +180,9 @@ func (a *APIHandler) HandleAccounts(w http.ResponseWriter, r *http.Request) {
 		case http.MethodGet:
 			a.getAccount(w, r, accountID)
 			return
+		case http.MethodPut:
+			a.updateAccountProxy(w, r, accountID)
+			return
 		case http.MethodDelete:
 			a.deleteAccount(w, r, accountID)
 			return
@@ -257,6 +260,39 @@ func (a *APIHandler) getAccount(w http.ResponseWriter, r *http.Request, id strin
 		Account: acc,
 		Buckets: buckets,
 	})
+}
+
+func (a *APIHandler) updateAccountProxy(w http.ResponseWriter, r *http.Request, id string) {
+	ctx := r.Context()
+	var body struct {
+		ProxyURL string `json:"proxy_url"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErrorJSON(w, http.StatusBadRequest, "invalid request payload", err)
+		return
+	}
+
+	if a.accountRepo == nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	if err := a.accountRepo.UpdateProxyURL(ctx, id, strings.TrimSpace(body.ProxyURL)); err != nil {
+		if errors.Is(err, domain.ErrAccountNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		writeErrorJSON(w, http.StatusInternalServerError, "failed to update account proxy", err)
+		return
+	}
+
+	acc, err := a.accountRepo.GetByID(ctx, id)
+	if err != nil {
+		writeErrorJSON(w, http.StatusInternalServerError, "failed to get updated account", err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, acc)
 }
 
 func (a *APIHandler) selectAccount(w http.ResponseWriter, r *http.Request, id string) {

@@ -56,6 +56,8 @@ func main() {
 		runUninstallDesktop(args)
 	case "add-account":
 		runAddAccount(args)
+	case "set-account-proxy":
+		runSetAccountProxy(args)
 	case "list-accounts":
 		runListAccounts(args)
 	case "status":
@@ -84,8 +86,9 @@ func printUsage() {
 	fmt.Println("  config             Get, set, or list persistent configuration (models, port, db, paths)")
 	fmt.Println("  install-desktop    Install GNOME / XDG desktop application entry with official icon")
 	fmt.Println("  uninstall-desktop  Remove GNOME / XDG desktop application entry")
-	fmt.Println("  add-account        Onboard a Google account via 1-click browser OAuth2 flow")
-	fmt.Println("  list-accounts      Display registered accounts and their quota availability")
+	fmt.Println("  add-account        Onboard a Google account via 1-click browser OAuth2 flow (--proxy supported)")
+	fmt.Println("  set-account-proxy  Assign or update Webshare/outbound proxy URL for a specific account")
+	fmt.Println("  list-accounts      Display registered accounts, their proxy URLs, and quota availability")
 	fmt.Println("  refresh-quotas     Force live quota synchronization from Google for all accounts")
 	fmt.Println("  status             Display current active account and switcher health")
 	fmt.Println("  version            Display binary version, commit, and build date")
@@ -388,6 +391,7 @@ func runWrap(args []string) {
 func runAddAccount(args []string) {
 	fs := flag.NewFlagSet("add-account", flag.ExitOnError)
 	dbPath := fs.String("db", defaultDBPath(), "Path to SQLite database file")
+	proxyFlag := fs.String("proxy", "", "Optional outbound Webshare/HTTP/SOCKS5 proxy URL (e.g. http://user:pass@p.webshare.io:80)")
 	noBrowser := fs.Bool("no-browser", false, "Do not attempt to open browser automatically (useful in SSH/headless)")
 	_ = fs.Parse(args)
 
@@ -424,8 +428,58 @@ func runAddAccount(args []string) {
 		os.Exit(1)
 	}
 
+	if *proxyFlag != "" {
+		_ = accRepo.UpdateProxyURL(ctx, acc.ID, strings.TrimSpace(*proxyFlag))
+		acc.ProxyURL = strings.TrimSpace(*proxyFlag)
+	}
+
 	fmt.Printf("\nSuccess! Google Account %s has been registered and activated.\n", acc.Email)
 	fmt.Printf("Account ID: %s\n", acc.ID)
+	if acc.ProxyURL != "" {
+		fmt.Printf("Outbound Proxy: %s\n", acc.ProxyURL)
+	}
+}
+
+func runSetAccountProxy(args []string) {
+	fs := flag.NewFlagSet("set-account-proxy", flag.ExitOnError)
+	dbPath := fs.String("db", defaultDBPath(), "Path to SQLite database file")
+	_ = fs.Parse(args)
+
+	positional := fs.Args()
+	if len(positional) < 2 {
+		fmt.Println("Usage: antigravity-account-switcher set-account-proxy [flags] <account_id|email> <proxy_url>")
+		fmt.Println("Example: antigravity-account-switcher set-account-proxy conta1@gmail.com \"http://usr123-session-acc1:pass@p.webshare.io:80\"")
+		os.Exit(1)
+	}
+
+	target := positional[0]
+	proxyURL := strings.TrimSpace(positional[1])
+
+	db, err := sqlite.Open(*dbPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error opening SQLite database: %v\n", err)
+		os.Exit(1)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+	accRepo := sqlite.NewAccountRepository(db)
+
+	acc, err := accRepo.GetByEmail(ctx, target)
+	if err != nil {
+		acc, err = accRepo.GetByID(ctx, target)
+	}
+	if err != nil || acc == nil {
+		fmt.Fprintf(os.Stderr, "Error: account '%s' not found\n", target)
+		os.Exit(1)
+	}
+
+	if err := accRepo.UpdateProxyURL(ctx, acc.ID, proxyURL); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to update proxy URL: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Success! Updated outbound proxy for account %s (%s) to:\n  %s\n", acc.Email, acc.ID, proxyURL)
 }
 
 func runListAccounts(args []string) {
@@ -457,8 +511,8 @@ func runListAccounts(args []string) {
 
 	allBuckets, _ := quotaRepo.ListAll(ctx)
 
-	fmt.Printf("%-36s  %-30s  %-10s  %-8s  %-12s  %-12s\n", "ID", "EMAIL", "STATUS", "ACTIVE", "DAILY QUOTA", "WEEKLY QUOTA")
-	fmt.Println("-------------------------------------------------------------------------------------------------------------")
+	fmt.Printf("%-36s  %-30s  %-10s  %-8s  %-12s  %-12s  %-35s\n", "ID", "EMAIL", "STATUS", "ACTIVE", "DAILY QUOTA", "WEEKLY QUOTA", "OUTBOUND PROXY")
+	fmt.Println("-------------------------------------------------------------------------------------------------------------------------------------------------------------")
 
 	for _, acc := range accounts {
 		activeMark := ""
@@ -479,13 +533,19 @@ func runListAccounts(args []string) {
 			}
 		}
 
-		fmt.Printf("%-36s  %-30s  %-10s  %-8s  %-12s  %-12s\n",
+		proxyStr := acc.ProxyURL
+		if proxyStr == "" {
+			proxyStr = "(direct)"
+		}
+
+		fmt.Printf("%-36s  %-30s  %-10s  %-8s  %-12s  %-12s  %-35s\n",
 			acc.ID,
 			acc.Email,
 			string(acc.Status),
 			activeMark,
 			dailyStr,
 			weeklyStr,
+			proxyStr,
 		)
 	}
 }

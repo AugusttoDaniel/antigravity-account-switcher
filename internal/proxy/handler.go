@@ -176,6 +176,8 @@ type ProxyHandler struct {
 	failoverEngine   *FailoverEngine
 	tokenRefresher   TokenRefresher
 	client           *http.Client
+	proxyMu          sync.RWMutex
+	proxyClients     map[string]*http.Client
 }
 
 // NewProxyHandler creates an initialized ProxyHandler.
@@ -232,7 +234,53 @@ func NewProxyHandler(accountRepo domain.AccountRepository, opts ...Option) (*Pro
 		failoverEngine:   failoverEngine,
 		tokenRefresher:   cfg.TokenRefresher,
 		client:           client,
+		proxyClients:     make(map[string]*http.Client),
 	}, nil
+}
+
+// GetClientForAccount returns an http.Client configured with the account's outbound proxy if set.
+func (h *ProxyHandler) GetClientForAccount(acc *domain.Account) *http.Client {
+	if acc == nil || strings.TrimSpace(acc.ProxyURL) == "" {
+		return h.client
+	}
+
+	proxyStr := strings.TrimSpace(acc.ProxyURL)
+
+	h.proxyMu.RLock()
+	if c, ok := h.proxyClients[proxyStr]; ok {
+		h.proxyMu.RUnlock()
+		return c
+	}
+	h.proxyMu.RUnlock()
+
+	parsedProxy, err := url.Parse(proxyStr)
+	if err != nil {
+		return h.client
+	}
+
+	h.proxyMu.Lock()
+	defer h.proxyMu.Unlock()
+	if c, ok := h.proxyClients[proxyStr]; ok {
+		return c
+	}
+
+	tr := &http.Transport{
+		Proxy:               http.ProxyURL(parsedProxy),
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 20,
+		IdleConnTimeout:     90 * time.Second,
+	}
+
+	client := &http.Client{
+		Timeout:   0,
+		Transport: tr,
+	}
+
+	if h.proxyClients == nil {
+		h.proxyClients = make(map[string]*http.Client)
+	}
+	h.proxyClients[proxyStr] = client
+	return client
 }
 
 // TargetURL returns the parsed upstream base URL.
@@ -690,8 +738,8 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			outReq.Header.Set("Accept-Encoding", "identity")
 		}
 
-		// Send upstream
-		resp, doErr := h.client.Do(outReq)
+		// Send upstream via per-account outbound client (supports Webshare/custom proxy)
+		resp, doErr := h.GetClientForAccount(currentAcc).Do(outReq)
 		if doErr != nil {
 			if ctx.Err() != nil {
 				return // Client disconnected

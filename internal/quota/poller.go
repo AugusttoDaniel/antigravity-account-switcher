@@ -98,6 +98,8 @@ type Poller struct {
 	broadcaster    domain.EventBroadcaster
 	eventRepo      domain.EventRepository
 	client         *http.Client
+	proxyMu        sync.RWMutex
+	proxyClients   map[string]*http.Client
 
 	stateMu sync.Mutex
 	running bool
@@ -145,7 +147,49 @@ func NewPoller(
 		broadcaster:    cfg.EventBroadcaster,
 		eventRepo:      cfg.EventRepo,
 		client:         client,
+		proxyClients:   make(map[string]*http.Client),
 	}, nil
+}
+
+func (p *Poller) getClientForAccount(acc *domain.Account) *http.Client {
+	if acc == nil || strings.TrimSpace(acc.ProxyURL) == "" {
+		return p.client
+	}
+	proxyStr := strings.TrimSpace(acc.ProxyURL)
+
+	p.proxyMu.RLock()
+	if c, ok := p.proxyClients[proxyStr]; ok {
+		p.proxyMu.RUnlock()
+		return c
+	}
+	p.proxyMu.RUnlock()
+
+	parsedProxy, err := url.Parse(proxyStr)
+	if err != nil {
+		return p.client
+	}
+
+	p.proxyMu.Lock()
+	defer p.proxyMu.Unlock()
+	if c, ok := p.proxyClients[proxyStr]; ok {
+		return c
+	}
+
+	client := &http.Client{
+		Timeout: DefaultHTTPTimeout,
+		Transport: &http.Transport{
+			Proxy:               http.ProxyURL(parsedProxy),
+			MaxIdleConns:        50,
+			MaxIdleConnsPerHost: 10,
+			IdleConnTimeout:     90 * time.Second,
+		},
+	}
+
+	if p.proxyClients == nil {
+		p.proxyClients = make(map[string]*http.Client)
+	}
+	p.proxyClients[proxyStr] = client
+	return client
 }
 
 // Start begins background polling in a separate goroutine.
@@ -381,7 +425,8 @@ func (p *Poller) fetchQuotaSummary(ctx context.Context, acc *domain.Account) ([]
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "antigravity/2.12.0 (linux; x86_64)")
 
-	resp, err := p.client.Do(req)
+	client := p.getClientForAccount(acc)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("quota HTTP request failed: %w", err)
 	}
@@ -401,7 +446,7 @@ func (p *Poller) fetchQuotaSummary(ctx context.Context, acc *domain.Account) ([]
 				retryReq.Header.Set("Authorization", "Bearer "+acc.AccessToken)
 				retryReq.Header.Set("Content-Type", "application/json")
 				retryReq.Header.Set("User-Agent", "antigravity/2.12.0 (linux; x86_64)")
-				resp2, err2 := p.client.Do(retryReq)
+				resp2, err2 := client.Do(retryReq)
 				if err2 == nil {
 					defer resp2.Body.Close()
 					if resp2.StatusCode == http.StatusOK {

@@ -91,6 +91,13 @@ CREATE TABLE IF NOT EXISTS proxy_events (
 CREATE INDEX IF NOT EXISTS idx_proxy_events_created_at ON proxy_events(created_at);
 `,
 	},
+	{
+		Version:     2,
+		Description: "add_account_proxy_url",
+		SQL: `
+ALTER TABLE accounts ADD COLUMN proxy_url TEXT NOT NULL DEFAULT '';
+`,
+	},
 }
 
 // Migrate applies all pending schema migrations to the database.

@@ -388,6 +388,17 @@
     });
   }
 
+  function maskProxyURL(str) {
+    if (!str) return 'Direct Connection (No Outbound Proxy)';
+    try {
+      const u = new URL(str);
+      if (u.password) u.password = '••••';
+      return u.toString();
+    } catch (e) {
+      return str;
+    }
+  }
+
   function createAccountCard(acc) {
     const card = document.createElement('div');
     const isActive = Boolean(acc.is_active);
@@ -549,6 +560,15 @@
         </div>
       </div>
 
+      <div class="proxy-info-row" style="padding: 0.4rem 0.6rem; margin-bottom: 0.5rem; background: rgba(0,0,0,0.15); border-radius: 6px; font-size: 0.72rem; display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;">
+        <span style="font-family: monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--color-text-secondary);" title="${escapeHtml(acc.proxy_url || '')}">
+          🌐 ${escapeHtml(maskProxyURL(acc.proxy_url))}
+        </span>
+        <button class="btn btn-xs btn-secondary btn-edit-proxy" data-id="${escapeHtml(acc.id)}" data-email="${escapeHtml(acc.email)}" data-proxy="${escapeHtml(acc.proxy_url || '')}" title="Set Webshare / Outbound Proxy">
+          Edit Proxy
+        </button>
+      </div>
+
       <div class="quota-matrix">
         ${quotaBodyHtml}
       </div>
@@ -578,6 +598,34 @@
         e.stopPropagation();
         const toCopy = isPrivacyMode ? '[redacted@email.com]' : acc.email;
         copyToClipboard(toCopy, isPrivacyMode ? 'Redacted email' : 'Account email');
+      });
+    }
+
+    // Bind edit proxy
+    const editProxyBtn = card.querySelector('.btn-edit-proxy');
+    if (editProxyBtn) {
+      editProxyBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const currentProxy = acc.proxy_url || '';
+        const displayAccount = isPrivacyMode ? '[redacted@email.com]' : acc.email;
+        const newProxy = prompt(`Set Webshare / Outbound Proxy for ${displayAccount}:\n\nExample: http://usr123-session-acc1:pass@p.webshare.io:80\n\nLeave empty for Direct connection (no proxy):`, currentProxy);
+        if (newProxy === null) return;
+        try {
+          const res = await fetch(`/api/accounts/${acc.id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ proxy_url: newProxy.trim() })
+          });
+          if (res.ok) {
+            showToast('Outbound proxy updated successfully', 'success', 2500);
+            fetchAccounts();
+          } else {
+            const errData = await res.json();
+            showToast(`Failed to set proxy: ${errData.message || res.statusText}`, 'error', 3500);
+          }
+        } catch (err) {
+          showToast(`Error updating proxy: ${err.message}`, 'error', 3500);
+        }
       });
     }
 
