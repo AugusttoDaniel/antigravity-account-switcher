@@ -128,7 +128,7 @@ fingerprint.
 | `config.proxies` pool field                        | ✅ done |
 | `adspower_profile_id` column + repo method (migration v3) | ✅ done |
 | `add-account-adspower` CLI (one at a time)         | ✅ done (`cmd/.../adspower.go`) |
-| `import-adspower --all` (batch)                    | ⬜ later (approved order: batch after single) |
+| `import-adspower --all` (batch)                    | ✅ done (reuses each profile's own proxy) |
 | Mode (b) form/2FA automation                       | ⬜ out of scope (assisted chosen) |
 
 ### Implementation notes
