@@ -34,6 +34,7 @@ func runAddAccountAdsPower(args []string) {
 	profileName := fs.String("profile-name", "", "Name for the ADS Power profile to create (default derived from the email/time)")
 	apiURL := fs.String("api-url", adspower.DefaultBaseURL, "ADS Power Local API base URL")
 	apiKey := fs.String("api-key", "", "ADS Power Local API key (if enabled in ADS Power settings)")
+	engine := fs.String("engine", "cloak", "Browser engine for a newly created profile (AliasMode: 'cloak'=Chromium; ignored by ADS Power)")
 	timeout := fs.Duration("timeout", 10*time.Minute, "How long to wait for the assisted Google sign-in to complete")
 	_ = fs.Parse(args)
 
@@ -121,8 +122,8 @@ func runAddAccountAdsPower(args []string) {
 			fmt.Fprintf(os.Stderr, "Error building profile proxy config: %v\n", pErr)
 			os.Exit(1)
 		}
-		fmt.Printf("Creating ADS Power profile %q bound to proxy %s...\n", name, maskProxy(proxyURL))
-		profileID, err = ads.CreateProfile(ctx, adspower.CreateProfileRequest{Name: name, ProxyConfig: pc})
+		fmt.Printf("Creating profile %q (engine %s) bound to proxy %s...\n", name, *engine, maskProxy(proxyURL))
+		profileID, err = ads.CreateProfile(ctx, adspower.CreateProfileRequest{Name: name, Browser: *engine, ProxyConfig: pc})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error creating ADS Power profile: %v\n", err)
 			os.Exit(1)
