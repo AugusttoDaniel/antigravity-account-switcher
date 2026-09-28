@@ -42,8 +42,8 @@ func TestExchangeCode_ProbesSecretsOnInvalidClient(t *testing.T) {
 	if attempts != 3 {
 		t.Errorf("expected 3 attempts (2 wrong + 1 correct), got %d", attempts)
 	}
-	if svc.cfg.ClientSecret != correct {
-		t.Errorf("working secret must be cached, got %q", svc.cfg.ClientSecret)
+	if svc.cachedSecret != correct {
+		t.Errorf("working secret must be cached, got %q", svc.cachedSecret)
 	}
 }
 
