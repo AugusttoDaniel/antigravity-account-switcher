@@ -16,6 +16,7 @@ import (
 
 	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/config"
 	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/domain"
+	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/egress"
 	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/launcher"
 	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/metrics"
 	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/oauth"
@@ -404,6 +405,11 @@ func runAddAccount(args []string) {
 	noBrowser := fs.Bool("no-browser", false, "Do not attempt to open browser automatically (useful in SSH/headless)")
 	_ = fs.Parse(args)
 
+	if err := egress.ValidateProxyURL(*proxyFlag); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: --proxy: %v\n", err)
+		os.Exit(1)
+	}
+
 	db, err := sqlite.Open(*dbPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error opening SQLite database: %v\n", err)
@@ -449,7 +455,7 @@ func runAddAccount(args []string) {
 	fmt.Printf("\nSuccess! Google Account %s has been registered and activated.\n", acc.Email)
 	fmt.Printf("Account ID: %s\n", acc.ID)
 	if acc.ProxyURL != "" {
-		fmt.Printf("Outbound Proxy: %s\n", acc.ProxyURL)
+		fmt.Printf("Outbound Proxy: %s\n", maskProxy(acc.ProxyURL))
 	}
 }
 
@@ -467,6 +473,10 @@ func runSetAccountProxy(args []string) {
 
 	target := positional[0]
 	proxyURL := strings.TrimSpace(positional[1])
+	if err := egress.ValidateProxyURL(proxyURL); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
 
 	db, err := sqlite.Open(*dbPath)
 	if err != nil {
@@ -492,7 +502,7 @@ func runSetAccountProxy(args []string) {
 		os.Exit(1)
 	}
 
-	fmt.Printf("Success! Updated outbound proxy for account %s (%s) to:\n  %s\n", acc.Email, acc.ID, proxyURL)
+	fmt.Printf("Success! Updated outbound proxy for account %s (%s) to:\n  %s\n", acc.Email, acc.ID, maskProxy(proxyURL))
 }
 
 func runListAccounts(args []string) {
@@ -546,10 +556,7 @@ func runListAccounts(args []string) {
 			}
 		}
 
-		proxyStr := acc.ProxyURL
-		if proxyStr == "" {
-			proxyStr = "(direct)"
-		}
+		proxyStr := maskProxy(acc.ProxyURL)
 
 		fmt.Printf("%-36s  %-30s  %-10s  %-8s  %-12s  %-12s  %-35s\n",
 			acc.ID,

@@ -345,7 +345,7 @@ antigravity-account-switcher config set antigravity_bin /caminho/para/antigravit
 ```
 
 #### 2. Isso interfere na digitação por voz (Speech-to-Text) do Antigravity?
-Não. O switcher define automaticamente `NO_PROXY=speech.googleapis.com` e implementa tunelamento TCP bruto via RFC 7231 em conexões `CONNECT`, garantindo latência zero e funcionamento perfeito do áudio.
+Não. O tráfego de voz (`speech.googleapis.com`) passa por um túnel TCP bruto via RFC 7231 em conexões `CONNECT`, byte a byte, então o áudio não é inspecionado nem alterado. Como todo tráfego que não é loopback, o túnel sai pelo proxy da conta ativa, e a digitação por voz nunca revela seu IP real.
 
 #### 3. Onde ficam guardados meus tokens e credenciais?
 Os tokens ficam armazenados exclusivamente no seu disco local, no banco SQLite protegido em `~/.config/antigravity-account-switcher/accounts.db`. Nenhuma informação, token ou métrica jamais sai da sua máquina.

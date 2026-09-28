@@ -2,11 +2,14 @@ package oauth
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+
+	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/egress"
 )
 
 // TestRefreshTokenVia_EgressesThroughProxy proves that a non-empty proxyURL causes the token
@@ -113,5 +116,44 @@ func TestClientForProxy_CachesPerURL(t *testing.T) {
 	}
 	if a1 == svc.client || b == svc.client {
 		t.Error("a proxied client must not be the direct client")
+	}
+}
+
+// A token exchange or refresh through an unusable proxy must error, not leave from the real IP.
+func TestClientForProxy_InvalidProxyFailsClosed(t *testing.T) {
+	var hits int32
+	origin := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		atomic.AddInt32(&hits, 1)
+	}))
+	defer origin.Close()
+
+	svc := NewOAuthService(nil, WithClientID("client-id"), WithCredentialCandidates([]string{"client-id"}, []string{"secret"}))
+	resp, err := svc.clientForProxy("1.2.3.4:8080").Get(origin.URL)
+	if err == nil {
+		_ = resp.Body.Close()
+		t.Fatal("expected the request to be refused")
+	}
+	if !errors.Is(err, egress.ErrInvalidProxy) {
+		t.Errorf("expected ErrInvalidProxy, got %v", err)
+	}
+	if n := atomic.LoadInt32(&hits); n != 0 {
+		t.Errorf("request reached the origin %d time(s) directly; must fail closed", n)
+	}
+}
+
+// The flow must reject an unusable proxy before the consent screen, so the single-use
+// authorization code is never spent on an exchange that cannot succeed.
+func TestStartLoopbackFlowWithProxy_RejectsInvalidProxyBeforeConsent(t *testing.T) {
+	svc := NewOAuthService(nil, WithClientID("client-id"), WithCredentialCandidates([]string{"client-id"}, []string{"secret"}))
+	opened := false
+	_, err := svc.StartLoopbackFlowWithProxy(context.Background(), func(string) error {
+		opened = true
+		return nil
+	}, func(string) {}, "1.2.3.4:8080")
+	if !errors.Is(err, egress.ErrInvalidProxy) {
+		t.Fatalf("expected ErrInvalidProxy, got %v", err)
+	}
+	if opened {
+		t.Error("consent screen was opened despite an invalid proxy")
 	}
 }

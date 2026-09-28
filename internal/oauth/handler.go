@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/domain"
+	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/egress"
 	"github.com/google/uuid"
 )
 
@@ -520,9 +521,10 @@ func NewOAuthService(accountRepo domain.AccountRepository, opts ...Option) *OAut
 }
 
 // clientForProxy returns an *http.Client whose transport egresses through proxyURL. An empty
-// proxyURL (or one that fails to parse) yields the default direct client, mirroring the
-// behaviour of the data-plane proxy handler so OAuth egress and API egress stay consistent.
-// Clients are cached per distinct proxy URL for the lifetime of the service.
+// proxyURL yields the default direct client; an invalid one yields a fail-closed client that
+// refuses every request, never the direct client. This mirrors the data-plane proxy handler so
+// OAuth egress and API egress stay consistent. Clients are cached per distinct proxy URL for the
+// lifetime of the service.
 func (s *OAuthService) clientForProxy(proxyURL string) *http.Client {
 	proxyStr := strings.TrimSpace(proxyURL)
 	if proxyStr == "" {
@@ -536,11 +538,6 @@ func (s *OAuthService) clientForProxy(proxyURL string) *http.Client {
 	}
 	s.proxyMu.RUnlock()
 
-	parsedProxy, err := url.Parse(proxyStr)
-	if err != nil {
-		return s.client
-	}
-
 	s.proxyMu.Lock()
 	defer s.proxyMu.Unlock()
 	if c, ok := s.proxyClients[proxyStr]; ok {
@@ -552,14 +549,21 @@ func (s *OAuthService) clientForProxy(proxyURL string) *http.Client {
 		timeout = s.client.Timeout
 	}
 
-	c := &http.Client{
-		Timeout: timeout,
-		Transport: &http.Transport{
-			Proxy:               http.ProxyURL(parsedProxy),
-			MaxIdleConns:        50,
-			MaxIdleConnsPerHost: 10,
-			IdleConnTimeout:     90 * time.Second,
-		},
+	var c *http.Client
+	if parsedProxy, err := egress.ParseProxyURL(proxyStr); err != nil {
+		// Never fall back to the direct client: a token exchange or refresh from the operator's
+		// real IP links the account to it. The fail-closed client makes the call error out instead.
+		c = egress.FailClosedClient(err)
+	} else {
+		c = &http.Client{
+			Timeout: timeout,
+			Transport: &http.Transport{
+				Proxy:               http.ProxyURL(parsedProxy),
+				MaxIdleConns:        50,
+				MaxIdleConnsPerHost: 10,
+				IdleConnTimeout:     90 * time.Second,
+			},
+		}
 	}
 
 	if s.proxyClients == nil {
@@ -615,6 +619,11 @@ func (s *OAuthService) StartLoopbackFlow(ctx context.Context, opener BrowserOpen
 // browser opened by opener, which is not proxied here; isolating the browser itself is the job of
 // the antidetect-browser integration.
 func (s *OAuthService) StartLoopbackFlowWithProxy(ctx context.Context, opener BrowserOpener, urlLogger func(string), proxyURL string) (*domain.Account, error) {
+	// Reject an unusable proxy before the consent screen: otherwise the single-use authorization
+	// code is spent and only the exchange fails.
+	if err := egress.ValidateProxyURL(proxyURL); err != nil {
+		return nil, err
+	}
 	if s.cfg.ClientID == "" || s.cfg.ClientSecret == "" {
 		return nil, errors.New("google oauth client credentials not found; please ensure Antigravity 2.0 is installed or set ANTIGRAVITY_CLIENT_ID and ANTIGRAVITY_CLIENT_SECRET")
 	}

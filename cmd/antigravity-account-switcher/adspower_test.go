@@ -36,7 +36,11 @@ func TestMaskProxy(t *testing.T) {
 	cases := map[string]string{
 		"":                                   "(direct)",
 		"http://user:pass@host.example:8080": "http://***@host.example:8080",
-		"socks5://1.2.3.4:1080":              "socks5://1.2.3.4:1080",
+		"http://user:pass@host.example:8080/path": "http://***@host.example:8080",
+		"socks5://1.2.3.4:1080":                   "socks5://1.2.3.4:1080",
+		// Invalid values may hide credentials anywhere, so nothing of them is displayed.
+		"1.2.3.4:8080:alice:s3cret":    "(invalid proxy URL, hidden)",
+		"alice:s3cret@host.example:80": "(invalid proxy URL, hidden)",
 	}
 	for in, want := range cases {
 		if got := maskProxy(in); got != want {

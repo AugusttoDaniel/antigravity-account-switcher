@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"math"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -16,6 +15,7 @@ import (
 
 	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/config"
 	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/domain"
+	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/egress"
 	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/oauth"
 	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/quota"
 )
@@ -263,28 +263,6 @@ func (a *APIHandler) getAccount(w http.ResponseWriter, r *http.Request, id strin
 	})
 }
 
-// validateProxyURL rejects proxy URLs that would silently be ignored by the outbound
-// transport (which then falls back to a direct connection, defeating per-account isolation).
-// An empty value is allowed and clears any configured proxy.
-func validateProxyURL(raw string) error {
-	if raw == "" {
-		return nil
-	}
-	u, err := url.Parse(raw)
-	if err != nil {
-		return fmt.Errorf("not a valid URL: %w", err)
-	}
-	switch u.Scheme {
-	case "http", "https", "socks5", "socks5h":
-	default:
-		return fmt.Errorf("unsupported scheme %q (use http, https, socks5 or socks5h, e.g. http://user:pass@host:port)", u.Scheme)
-	}
-	if u.Host == "" {
-		return errors.New("missing host:port")
-	}
-	return nil
-}
-
 func (a *APIHandler) updateAccountProxy(w http.ResponseWriter, r *http.Request, id string) {
 	ctx := r.Context()
 	var body struct {
@@ -301,7 +279,7 @@ func (a *APIHandler) updateAccountProxy(w http.ResponseWriter, r *http.Request, 
 	}
 
 	proxyURL := strings.TrimSpace(body.ProxyURL)
-	if err := validateProxyURL(proxyURL); err != nil {
+	if err := egress.ValidateProxyURL(proxyURL); err != nil {
 		writeErrorJSON(w, http.StatusBadRequest, "invalid proxy_url", err)
 		return
 	}

@@ -17,6 +17,7 @@ import (
 
 	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/config"
 	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/domain"
+	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/egress"
 )
 
 const (
@@ -180,6 +181,8 @@ type ProxyHandler struct {
 	client           *http.Client
 	proxyMu          sync.RWMutex
 	proxyClients     map[string]*http.Client
+	// dial opens the upstream side of CONNECT tunnels (egress.Dial; replaced in tests).
+	dial func(ctx context.Context, proxy *url.URL, addr string) (net.Conn, error)
 }
 
 // NewProxyHandler creates an initialized ProxyHandler.
@@ -237,6 +240,7 @@ func NewProxyHandler(accountRepo domain.AccountRepository, opts ...Option) (*Pro
 		tokenRefresher:   cfg.TokenRefresher,
 		client:           client,
 		proxyClients:     make(map[string]*http.Client),
+		dial:             egress.Dial,
 	}, nil
 }
 
@@ -255,27 +259,27 @@ func (h *ProxyHandler) GetClientForAccount(acc *domain.Account) *http.Client {
 	}
 	h.proxyMu.RUnlock()
 
-	parsedProxy, err := url.Parse(proxyStr)
-	if err != nil {
-		return h.client
-	}
-
 	h.proxyMu.Lock()
 	defer h.proxyMu.Unlock()
 	if c, ok := h.proxyClients[proxyStr]; ok {
 		return c
 	}
 
-	tr := &http.Transport{
-		Proxy:               http.ProxyURL(parsedProxy),
-		MaxIdleConns:        100,
-		MaxIdleConnsPerHost: 20,
-		IdleConnTimeout:     90 * time.Second,
-	}
-
-	client := &http.Client{
-		Timeout:   0,
-		Transport: tr,
+	var client *http.Client
+	if parsedProxy, err := egress.ParseProxyURL(proxyStr); err != nil {
+		// Never fall back to the direct client: that would send this account's requests, bearer
+		// token included, from the operator's real IP. The fail-closed client refuses them instead.
+		client = egress.FailClosedClient(fmt.Errorf("account %s: %w", acc.Email, err))
+	} else {
+		client = &http.Client{
+			Timeout: 0,
+			Transport: &http.Transport{
+				Proxy:               http.ProxyURL(parsedProxy),
+				MaxIdleConns:        100,
+				MaxIdleConnsPerHost: 20,
+				IdleConnTimeout:     90 * time.Second,
+			},
+		}
 	}
 
 	if h.proxyClients == nil {
@@ -357,29 +361,58 @@ func copyResponseHeaders(dst, src http.Header) {
 	}
 }
 
-func setForwardingHeaders(outReq *http.Request, r *http.Request) {
-	clientIP := r.RemoteAddr
-	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
-		clientIP = host
-	}
+// forwardingHeaders reveal that a proxy sits between the client and Google, and carry the same
+// loopback values for every account, which links the accounts together. They are never sent
+// upstream, including when the client supplies them itself.
+var forwardingHeaders = []string{
+	"Forwarded",
+	"Via",
+	"X-Forwarded-For",
+	"X-Forwarded-Host",
+	"X-Forwarded-Proto",
+	"X-Forwarded-Port",
+	"X-Real-IP",
+}
 
-	if prior := r.Header.Get("X-Forwarded-For"); prior != "" {
-		outReq.Header.Set("X-Forwarded-For", prior+", "+clientIP)
-	} else if clientIP != "" {
-		outReq.Header.Set("X-Forwarded-For", clientIP)
-	}
-
-	proto := "http"
-	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
-		proto = "https"
-	}
-	outReq.Header.Set("X-Forwarded-Proto", proto)
-
-	if r.Host != "" {
-		outReq.Header.Set("X-Forwarded-Host", r.Host)
+func stripForwardingHeaders(h http.Header) {
+	for _, k := range forwardingHeaders {
+		h.Del(k)
 	}
 }
 
+// egressAccount returns the account whose route non-Cloud-Code traffic must share: the active
+// account, or the one the next Cloud Code request would activate. nil means the pool is empty.
+func (h *ProxyHandler) egressAccount(ctx context.Context) *domain.Account {
+	if acc, err := h.accountRepo.GetActive(ctx); err == nil && acc != nil {
+		return acc
+	}
+	if acc, err := h.accountRepo.GetNextAvailable(ctx, ""); err == nil && acc != nil {
+		return acc
+	}
+	return nil
+}
+
+// egressProxyFor returns the proxy that traffic to target must leave through. Loopback targets stay
+// local; everything else follows the active account's route (direct only when that account has no
+// proxy, exactly like its Cloud Code traffic), so the Antigravity process never talks to Google from
+// the operator's real IP while its model traffic goes through a proxy. An unusable proxy is an
+// error, never a direct dial.
+func (h *ProxyHandler) egressProxyFor(ctx context.Context, target string) (*url.URL, error) {
+	if egress.IsLoopbackHost(target) {
+		return nil, nil
+	}
+	acc := h.egressAccount(ctx)
+	if acc == nil || strings.TrimSpace(acc.ProxyURL) == "" {
+		return nil, nil
+	}
+	u, err := egress.ParseProxyURL(acc.ProxyURL)
+	if err != nil {
+		return nil, fmt.Errorf("account %s: %w", acc.Email, err)
+	}
+	return u, nil
+}
+
+// handleConnect tunnels a CONNECT request through the route chosen by egressProxyFor.
 func (h *ProxyHandler) handleConnect(w http.ResponseWriter, r *http.Request) {
 	hijacker, ok := w.(http.Hijacker)
 	if !ok {
@@ -387,16 +420,26 @@ func (h *ProxyHandler) handleConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	clientConn, rw, err := hijacker.Hijack()
+	target := r.Host
+	proxyURL, err := h.egressProxyFor(r.Context(), target)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		http.Error(w, fmt.Sprintf("egress blocked: %v", err), http.StatusBadGateway)
 		return
 	}
 
-	destConn, err := net.DialTimeout("tcp", r.Host, 10*time.Second)
+	// Dial before hijacking so a failure can still be answered as a normal HTTP response.
+	dialCtx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	destConn, err := h.dial(dialCtx, proxyURL, target)
+	cancel()
 	if err != nil {
-		_, _ = clientConn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\n\r\n"))
-		_ = clientConn.Close()
+		http.Error(w, fmt.Sprintf("upstream connect failed: %v", err), http.StatusBadGateway)
+		return
+	}
+
+	clientConn, rw, err := hijacker.Hijack()
+	if err != nil {
+		_ = destConn.Close()
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
 	}
 
@@ -719,8 +762,8 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			outReq.Host = destURL.Host
 		}
 
-		// Set standard forwarding headers
-		setForwardingHeaders(outReq, r)
+		// Never advertise the proxy hop upstream (see forwardingHeaders)
+		stripForwardingHeaders(outReq.Header)
 
 		// Authorization header handling
 		if isPassThrough || currentAcc == nil {
@@ -740,8 +783,14 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			outReq.Header.Set("Accept-Encoding", "identity")
 		}
 
-		// Send upstream via per-account outbound client (supports Webshare/custom proxy)
-		resp, doErr := h.GetClientForAccount(currentAcc).Do(outReq)
+		// Send upstream via per-account outbound client (supports Webshare/custom proxy). Forward
+		// requests to other hosts carry no account but still leave through the active account's
+		// route (see egressProxyFor); loopback targets stay local.
+		upstream := h.GetClientForAccount(currentAcc)
+		if isExplicitForwardToOther && !egress.IsLoopbackHost(r.URL.Host) {
+			upstream = h.GetClientForAccount(h.egressAccount(ctx))
+		}
+		resp, doErr := upstream.Do(outReq)
 		if doErr != nil {
 			if ctx.Err() != nil {
 				return // Client disconnected
