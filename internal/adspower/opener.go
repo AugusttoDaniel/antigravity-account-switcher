@@ -84,28 +84,49 @@ func Navigate(ctx context.Context, browserWSURL, debugPort, targetURL string) er
 		return fmt.Errorf("adspower: empty browser websocket url")
 	}
 
-	pages, err := ListPageTargets(ctx, nil, debugPort)
-	if err != nil {
-		return err
-	}
-	page, ok := pickPageTarget(pages)
-	if !ok {
-		return fmt.Errorf("adspower: profile browser has no page target to drive")
+	// The profile browser opens on ADS Power's own start page, and ADS Power may still be loading
+	// it when we connect. Wait until at least one page target exists so we don't race that load.
+	if strings.TrimSpace(debugPort) != "" {
+		waitForPageTarget(ctx, debugPort)
 	}
 
 	allocCtx, cancelAlloc := chromedp.NewRemoteAllocator(ctx, browserWSURL)
 	defer cancelAlloc()
 
-	// Attaching to an existing target means chromedp will not close it when this context is
-	// cancelled, so the consent tab survives our disconnect.
-	attachCtx, cancelAttach := chromedp.NewContext(allocCtx, chromedp.WithTargetID(target.ID(page.ID)))
-	defer cancelAttach()
+	// A control context for browser-level CDP commands. chromedp opens a throwaway tab for it that
+	// closes on cancel; the consent tab we create below is a separate, untracked target.
+	ctlCtx, cancelCtl := chromedp.NewContext(allocCtx)
+	defer cancelCtl()
 
-	navCtx, cancelNav := context.WithTimeout(attachCtx, 45*time.Second)
-	defer cancelNav()
+	runCtx, cancelRun := context.WithTimeout(ctlCtx, 45*time.Second)
+	defer cancelRun()
 
-	if err := chromedp.Run(navCtx, chromedp.Navigate(targetURL)); err != nil {
-		return fmt.Errorf("adspower: navigate consent url in profile browser: %w", err)
+	// Open the consent URL as a NEW target rather than navigating ADS Power's start-page tab (which
+	// ADS Power can reload out from under us) or a chromedp-managed tab (closed on context cancel).
+	// A target created this way survives our disconnect, so the sign-in page stays up for the human.
+	if err := chromedp.Run(runCtx, chromedp.ActionFunc(func(c context.Context) error {
+		tid, err := target.CreateTarget(targetURL).Do(c)
+		if err != nil {
+			return err
+		}
+		return target.ActivateTarget(tid).Do(c)
+	})); err != nil {
+		return fmt.Errorf("adspower: open consent url in profile browser: %w", err)
 	}
 	return nil
+}
+
+// waitForPageTarget blocks (up to a short budget) until the profile browser reports at least one
+// page target, meaning it has finished opening and is ready to accept a new tab.
+func waitForPageTarget(ctx context.Context, debugPort string) {
+	deadline := time.Now().Add(8 * time.Second)
+	for time.Now().Before(deadline) {
+		if ctx.Err() != nil {
+			return
+		}
+		if pages, err := ListPageTargets(ctx, nil, debugPort); err == nil && len(pages) > 0 {
+			return
+		}
+		time.Sleep(400 * time.Millisecond)
+	}
 }

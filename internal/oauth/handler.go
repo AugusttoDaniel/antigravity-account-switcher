@@ -53,9 +53,9 @@ func ResolveCredentials() (string, string) {
 //
 // The installed Antigravity binary embeds more than one client_id and more than one
 // client_secret, and their byte offsets do not reveal which secret belongs to which id.
-// Guessing a pairing (as earlier versions did) yields "invalid_client" at token exchange,
-// so all candidates are returned and the correct pair is probed against Google at runtime
-// (see OAuthService.ensureClientPair).
+// Guessing a pairing yields "invalid_client" at token exchange, so all candidates are returned
+// and the correct client_secret is probed against Google at runtime by ExchangeCodeVia and
+// RefreshTokenVia (which retry on an "invalid_client" response and cache the secret that works).
 //
 // Precedence, highest first:
 //  1. Environment variables ANTIGRAVITY_CLIENT_ID / ANTIGRAVITY_CLIENT_SECRET. When set,
@@ -771,15 +771,64 @@ func (s *OAuthService) ExchangeCode(ctx context.Context, code, codeVerifier, red
 }
 
 // ExchangeCodeVia is ExchangeCode but egresses through proxyURL when non-empty.
+//
+// The installed Antigravity bundle can embed several client_secrets, and their byte offsets do not
+// reveal which one pairs with the client_id used in the authorization request. Rather than guess,
+// this tries each discovered secret in turn: an "invalid_client" response is a client-authentication
+// failure that Google rejects before redeeming the authorization code, so the code survives the
+// probe and the next candidate can be tried. The secret that works is cached on the service for
+// subsequent refreshes.
 func (s *OAuthService) ExchangeCodeVia(ctx context.Context, code, codeVerifier, redirectURI, proxyURL string) (*TokenResponse, error) {
-	if s.cfg.ClientID == "" || s.cfg.ClientSecret == "" {
+	if s.cfg.ClientID == "" {
+		return nil, errors.New("google oauth client credentials not found; please ensure Antigravity 2.0 is installed or set ANTIGRAVITY_CLIENT_ID and ANTIGRAVITY_CLIENT_SECRET")
+	}
+	secrets := s.candidateSecrets()
+	if len(secrets) == 0 {
 		return nil, errors.New("google oauth client credentials not found; please ensure Antigravity 2.0 is installed or set ANTIGRAVITY_CLIENT_ID and ANTIGRAVITY_CLIENT_SECRET")
 	}
 
+	var lastErr error
+	for _, secret := range secrets {
+		tokenResp, invalidClient, err := s.exchangeOnce(ctx, code, codeVerifier, redirectURI, secret, proxyURL)
+		if err == nil {
+			s.cfg.ClientSecret = secret // remember the working pair for refreshes
+			return tokenResp, nil
+		}
+		lastErr = err
+		if invalidClient {
+			continue // wrong secret for this client_id; try the next candidate
+		}
+		return nil, err // a different failure (e.g. invalid_grant) — the credential pairing is fine
+	}
+	return nil, lastErr
+}
+
+// candidateSecrets returns every discovered client_secret to try, with the currently-configured
+// one first so a known-good pairing is not re-probed.
+func (s *OAuthService) candidateSecrets() []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(s.secCandidates)+1)
+	add := func(v string) {
+		if v != "" && !seen[v] {
+			seen[v] = true
+			out = append(out, v)
+		}
+	}
+	add(s.cfg.ClientSecret)
+	for _, sec := range s.secCandidates {
+		add(sec)
+	}
+	return out
+}
+
+// exchangeOnce performs a single authorization-code exchange with the given client_secret. It
+// reports whether a failure was an "invalid_client" client-authentication error, meaning the secret
+// is wrong for this client_id and another candidate should be tried.
+func (s *OAuthService) exchangeOnce(ctx context.Context, code, codeVerifier, redirectURI, clientSecret, proxyURL string) (*TokenResponse, bool, error) {
 	form := url.Values{
 		"grant_type":    {"authorization_code"},
 		"client_id":     {s.cfg.ClientID},
-		"client_secret": {s.cfg.ClientSecret},
+		"client_secret": {clientSecret},
 		"code":          {code},
 		"code_verifier": {codeVerifier},
 		"redirect_uri":  {redirectURI},
@@ -787,35 +836,41 @@ func (s *OAuthService) ExchangeCodeVia(ctx context.Context, code, codeVerifier, 
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.cfg.TokenURL, strings.NewReader(form.Encode()))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create token request: %w", err)
+		return nil, false, fmt.Errorf("failed to create token request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	resp, err := s.clientForProxy(proxyURL).Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("token HTTP exchange failed: %w", err)
+		return nil, false, fmt.Errorf("token HTTP exchange failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read token response: %w", err)
+		return nil, false, fmt.Errorf("failed to read token response: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("token request returned status %d: %s", resp.StatusCode, string(bodyBytes))
+		return nil, isInvalidClient(bodyBytes), fmt.Errorf("token request returned status %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
 	var tokenResp TokenResponse
 	if err := json.Unmarshal(bodyBytes, &tokenResp); err != nil {
-		return nil, fmt.Errorf("failed to decode token response: %w", err)
+		return nil, false, fmt.Errorf("failed to decode token response: %w", err)
 	}
-
 	if tokenResp.AccessToken == "" {
-		return nil, errors.New("received empty access_token from token endpoint")
+		return nil, false, errors.New("received empty access_token from token endpoint")
 	}
+	return &tokenResp, false, nil
+}
 
-	return &tokenResp, nil
+// isInvalidClient reports whether a token-endpoint error body is an OAuth2 "invalid_client" error.
+func isInvalidClient(body []byte) bool {
+	var errResp struct {
+		Error string `json:"error"`
+	}
+	return json.Unmarshal(body, &errResp) == nil && errResp.Error == "invalid_client"
 }
 
 // FetchUserInfo queries the userinfo endpoint to obtain the primary email address,
@@ -937,57 +992,82 @@ func (s *OAuthService) RefreshTokenVia(ctx context.Context, refreshToken, proxyU
 	if refreshToken == "" {
 		return nil, errors.New("empty refresh token")
 	}
-
-	if s.cfg.ClientID == "" || s.cfg.ClientSecret == "" {
+	if s.cfg.ClientID == "" {
+		return nil, errors.New("google oauth client credentials not found; please ensure Antigravity 2.0 is installed or set ANTIGRAVITY_CLIENT_ID and ANTIGRAVITY_CLIENT_SECRET")
+	}
+	secrets := s.candidateSecrets()
+	if len(secrets) == 0 {
 		return nil, errors.New("google oauth client credentials not found; please ensure Antigravity 2.0 is installed or set ANTIGRAVITY_CLIENT_ID and ANTIGRAVITY_CLIENT_SECRET")
 	}
 
+	// Like ExchangeCodeVia, probe candidate secrets on an "invalid_client" response so a fresh
+	// process (which starts from a guessed pairing) recovers the correct client_secret.
+	var lastErr error
+	for _, secret := range secrets {
+		tokenResp, invalidClient, err := s.refreshOnce(ctx, refreshToken, secret, proxyURL)
+		if err == nil {
+			s.cfg.ClientSecret = secret
+			return tokenResp, nil
+		}
+		lastErr = err
+		if invalidClient {
+			continue
+		}
+		return nil, err // invalid_grant (revoked token) or transport error — do not keep probing
+	}
+	return nil, lastErr
+}
+
+// refreshOnce performs a single refresh-token grant with the given client_secret, reporting whether
+// a failure was an "invalid_client" error so the caller can try the next candidate secret.
+func (s *OAuthService) refreshOnce(ctx context.Context, refreshToken, clientSecret, proxyURL string) (*TokenResponse, bool, error) {
 	form := url.Values{
 		"client_id":     {s.cfg.ClientID},
-		"client_secret": {s.cfg.ClientSecret},
+		"client_secret": {clientSecret},
 		"refresh_token": {refreshToken},
 		"grant_type":    {"refresh_token"},
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.cfg.TokenURL, strings.NewReader(form.Encode()))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create refresh token request: %w", err)
+		return nil, false, fmt.Errorf("failed to create refresh token request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	resp, err := s.clientForProxy(proxyURL).Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("token refresh HTTP request failed: %w", err)
+		return nil, false, fmt.Errorf("token refresh HTTP request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read token refresh response: %w", err)
+		return nil, false, fmt.Errorf("failed to read token refresh response: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		var errResp struct {
-			Error            string `json:"error"`
-			ErrorDescription string `json:"error_description"`
+		if isInvalidGrant(bodyBytes) {
+			return nil, false, domain.ErrInvalidRefreshToken
 		}
-		_ = json.Unmarshal(bodyBytes, &errResp)
-		if errResp.Error == "invalid_grant" {
-			return nil, domain.ErrInvalidRefreshToken
-		}
-		return nil, fmt.Errorf("token refresh rejected with status %d: %s", resp.StatusCode, string(bodyBytes))
+		return nil, isInvalidClient(bodyBytes), fmt.Errorf("token refresh rejected with status %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
 	var tokenResp TokenResponse
 	if err := json.Unmarshal(bodyBytes, &tokenResp); err != nil {
-		return nil, fmt.Errorf("failed to decode token refresh response: %w", err)
+		return nil, false, fmt.Errorf("failed to decode token refresh response: %w", err)
 	}
-
 	if tokenResp.AccessToken == "" {
-		return nil, errors.New("received empty access_token on refresh")
+		return nil, false, errors.New("received empty access_token on refresh")
 	}
+	return &tokenResp, false, nil
+}
 
-	return &tokenResp, nil
+// isInvalidGrant reports whether a token-endpoint error body is an OAuth2 "invalid_grant" error.
+func isInvalidGrant(body []byte) bool {
+	var errResp struct {
+		Error string `json:"error"`
+	}
+	return json.Unmarshal(body, &errResp) == nil && errResp.Error == "invalid_grant"
 }
 
 // EnsureValidToken checks if an account's token is valid. If expiring, refreshes it and updates SQLite.

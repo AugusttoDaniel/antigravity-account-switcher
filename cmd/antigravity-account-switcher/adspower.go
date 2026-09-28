@@ -30,9 +30,11 @@ func runAddAccountAdsPower(args []string) {
 	dbPath := fs.String("db", defaultDBPath(), "Path to SQLite database file")
 	email := fs.String("email", "", "Known Google account email (lets the switcher reuse the account's existing proxy/profile on re-auth)")
 	proxyOverride := fs.String("proxy", "", "Force a specific outbound proxy URL, bypassing the pool/reuse policy")
+	profileFlag := fs.String("profile", "", "Use an existing ADS Power profile id directly (skips profile creation; works on the free plan)")
 	profileName := fs.String("profile-name", "", "Name for the ADS Power profile to create (default derived from the email/time)")
 	apiURL := fs.String("api-url", adspower.DefaultBaseURL, "ADS Power Local API base URL")
 	apiKey := fs.String("api-key", "", "ADS Power Local API key (if enabled in ADS Power settings)")
+	timeout := fs.Duration("timeout", 10*time.Minute, "How long to wait for the assisted Google sign-in to complete")
 	_ = fs.Parse(args)
 
 	db, err := sqlite.Open(*dbPath)
@@ -51,7 +53,7 @@ func runAddAccountAdsPower(args []string) {
 	defer cancel()
 
 	accRepo := sqlite.NewAccountRepository(db)
-	oauthService := oauth.NewOAuthService(accRepo)
+	oauthService := oauth.NewOAuthService(accRepo, oauth.WithFlowTimeout(*timeout))
 	ads := adspower.NewClient(adspower.WithBaseURL(*apiURL), adspower.WithAPIKey(*apiKey))
 
 	// Look up any existing account for this email to apply the reuse policy.
@@ -63,16 +65,42 @@ func runAddAccountAdsPower(args []string) {
 		}
 	}
 
-	// 1. Decide the proxy: explicit override > existing account's proxy > a never-used pool proxy.
-	proxyURL, err := decideProxy(ctx, *proxyOverride, existingProxy, cfg.Proxies, accRepo)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error selecting proxy: %v\n", err)
-		os.Exit(1)
+	explicitProfile := strings.TrimSpace(*profileFlag)
+
+	// 1. Decide the proxy.
+	var proxyURL string
+	if explicitProfile != "" {
+		// Free-plan path: an existing profile already owns its proxy inside ADS Power, so we do not
+		// draw from the pool. Route the server-side code exchange through --proxy (or the account's
+		// stored proxy) so it egresses from the same IP as the profile browser.
+		proxyURL = strings.TrimSpace(*proxyOverride)
+		if proxyURL == "" {
+			proxyURL = existingProxy
+		}
+		if proxyURL == "" {
+			fmt.Fprintln(os.Stderr, "Warning: no --proxy and no stored proxy; the OAuth code exchange will egress directly (the profile browser still uses its own proxy). Pass --proxy to match the profile's proxy.")
+		}
+	} else {
+		// explicit override > existing account's proxy > a never-used pool proxy.
+		proxyURL, err = decideProxy(ctx, *proxyOverride, existingProxy, cfg.Proxies, accRepo)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error selecting proxy: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
-	// 2. Decide the ADS Power profile: reuse the account's profile, else create one bound to proxy.
-	profileID := existingProfileID
+	// 2. Decide the ADS Power profile: explicit --profile > the account's stored profile > create one.
+	profileID := explicitProfile
 	if profileID == "" {
+		profileID = existingProfileID
+	}
+	switch {
+	case explicitProfile != "":
+		fmt.Printf("Using ADS Power profile: %s\n", profileID)
+	case profileID != "":
+		fmt.Printf("Reusing existing ADS Power profile: %s\n", profileID)
+	default:
+		// Create a new profile (requires a paid ADS Power plan).
 		name := strings.TrimSpace(*profileName)
 		if name == "" {
 			name = deriveProfileName(*email)
@@ -89,8 +117,6 @@ func runAddAccountAdsPower(args []string) {
 			os.Exit(1)
 		}
 		fmt.Printf("Created profile: %s\n", profileID)
-	} else {
-		fmt.Printf("Reusing existing ADS Power profile: %s\n", profileID)
 	}
 
 	// 3. Launch the profile, drive it to consent, complete the flow, and persist the bindings.
