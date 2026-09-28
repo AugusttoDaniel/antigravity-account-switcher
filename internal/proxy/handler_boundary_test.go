@@ -561,11 +561,18 @@ func TestHandler_UnexpectedUpstreamStatuses_NoFalseRotation(t *testing.T) {
 			if err != nil {
 				t.Fatalf("request failed: %v", err)
 			}
+			respBody, _ := io.ReadAll(resp.Body)
 			defer resp.Body.Close()
 
 			// 1. Verify status code is preserved verbatim
 			if resp.StatusCode != tc.statusCode {
 				t.Errorf("expected status %d, got %d", tc.statusCode, resp.StatusCode)
+			}
+
+			// 1b. Verify the upstream error body reaches the client verbatim and is not dropped.
+			// (Regression: 400/404 bodies were read for inspection and then never forwarded.)
+			if !strings.Contains(string(respBody), tc.errorCode) {
+				t.Errorf("expected upstream error body to be forwarded to client (want substring %q), got %q", tc.errorCode, string(respBody))
 			}
 
 			// 2. Verify upstream received EXACTLY 1 request (no retry loop or failover replay)
