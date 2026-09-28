@@ -119,16 +119,20 @@ func discoverFromIDEBundle() (string, string) {
 		"/Applications/Antigravity.app/Contents/Resources/app/out/main.js",
 	}
 
-	reID := regexp.MustCompile(`(\d+-[a-z0-9_]+\.apps\.googleusercontent\.com)`)
-	prefix := string([]byte{0x47, 0x4f, 0x43, 0x53, 0x50, 0x58, 0x2d}) // native client secret prefix bytes
+	reID := regexp.MustCompile(`(?i)(\d+-[a-z0-9_-]+\.apps\.googleusercontent\.com)`)
+	prefix := string([]byte{0x47, 0x4f, 0x43, 0x53, 0x50, 0x58, 0x2d}) // native client secret prefix bytes ("GOCSPX-")
 	reSec := regexp.MustCompile(regexp.QuoteMeta(prefix) + `[A-Za-z0-9_-]{28}`)
 
 	for _, c := range candidates {
 		if data, err := os.ReadFile(c); err == nil {
-			mID := reID.Find(data)
-			mSec := reSec.Find(data)
-			if len(mID) > 0 && len(mSec) > 0 {
-				return string(mID), string(mSec)
+			allIDs := reID.FindAll(data, -1)
+			allSecs := reSec.FindAll(data, -1)
+			if len(allIDs) > 0 && len(allSecs) > 0 {
+				idx := 0
+				if len(allIDs) > 1 && len(allSecs) > 1 {
+					idx = 1
+				}
+				return string(allIDs[idx]), string(allSecs[idx])
 			}
 		}
 	}
