@@ -118,8 +118,9 @@
 
     // Reapply log filtering to refresh blurred spans
     reapplyLogFilter();
-    // The pool list names the accounts using each proxy.
+    // The pool list and the OmniRoute comparison name accounts.
     renderPoolList();
+    if (omni.lastAccounts) renderOmniResults();
   }
 
   function togglePrivacyMode() {
@@ -567,10 +568,6 @@
     body: document.getElementById('pool-results-body'),
     selectAll: document.getElementById('pool-select-all'),
     sendOmni: document.getElementById('pool-send-omniroute'),
-    omniFields: document.getElementById('pool-omniroute-fields'),
-    omniURL: document.getElementById('pool-omniroute-url'),
-    omniToken: document.getElementById('pool-omniroute-token'),
-    omniRegion: document.getElementById('pool-omniroute-region'),
     importBtn: document.getElementById('btn-pool-import'),
     importMsg: document.getElementById('pool-import-msg'),
     list: document.getElementById('pool-list'),
@@ -664,19 +661,14 @@
     if (lines.length === 0 || pool.busy || pool.checkedText === null) return;
     const payload = { text: pool.checkedText, lines };
     if (pool.sendOmni.checked) {
-      payload.omniroute = {
-        url: pool.omniURL.value.trim(),
-        token: pool.omniToken.value.trim(),
-        region: pool.omniRegion.value.trim(),
-      };
-      if (!payload.omniroute.url || !payload.omniroute.token) {
-        pool.importMsg.textContent = 'Fill in the OmniRoute URL and token, or untick "Also send to OmniRoute".';
+      payload.omniroute = omniTarget();
+      if (!payload.omniroute) {
+        pool.importMsg.textContent = 'Fill in the OmniRoute URL and token under OmniRoute Sync, or untick "Also send to OmniRoute".';
+        omni.url.focus();
         return;
       }
-      try {
-        localStorage.setItem(OMNIROUTE_URL_KEY, payload.omniroute.url);
-        localStorage.setItem(OMNIROUTE_REGION_KEY, payload.omniroute.region);
-      } catch (_) {}
+      payload.omniroute.region = omni.region.value.trim();
+      rememberOmniFields();
     }
 
     pool.busy = true;
@@ -696,8 +688,9 @@
       const data = await res.json();
       const msg = [`Added ${data.added} to the pool` + (data.already_in_pool ? ` (${data.already_in_pool} already there)` : '') + '.'];
       if (data.omniroute) {
-        msg.push(`OmniRoute: ${data.omniroute.ok} sent` + (data.omniroute.failed ? `, ${data.omniroute.failed} failed` : '') + '.');
-        for (const e of data.omniroute.errors || []) msg.push(`Line ${e.line}: ${e.error}`);
+        const o = data.omniroute;
+        msg.push(`OmniRoute: ${o.created} new, ${o.updated} already there (updated)` + (o.failed ? `, ${o.failed} failed` : '') + '.');
+        for (const e of o.errors || []) msg.push(`Line ${e.line}: ${e.error}`);
       }
       pool.importMsg.textContent = msg.join(' ');
       showToast(`Proxy pool: ${data.added} added`, 'success', 3000);
@@ -706,8 +699,6 @@
       pool.importMsg.textContent = `Import failed: ${err.message}`;
     } finally {
       pool.busy = false;
-      // The token is single-use by design: never keep it around after an import attempt.
-      pool.omniToken.value = '';
       updatePoolImportState();
     }
   }
@@ -729,6 +720,7 @@
         <li>
           <span class="pool-proxy${e.invalid ? ' is-invalid' : ''}">${e.invalid ? '⚠️ hidden (invalid)' : escapeHtml(e.proxy)}</span>
           <span class="pool-usage${!e.used_by && !e.invalid ? ' is-free' : ''}">${usage}</span>
+          ${omniPoolBadge(e.id)}
           <button class="btn btn-xs btn-danger-subtle btn-pool-remove" data-id="${escapeHtml(e.id)}">Remove</button>
         </li>`;
     }).join('');
@@ -785,11 +777,6 @@
   }
 
   if (pool.input) {
-    try {
-      pool.omniURL.value = localStorage.getItem(OMNIROUTE_URL_KEY) || '';
-      pool.omniRegion.value = localStorage.getItem(OMNIROUTE_REGION_KEY) || '';
-    } catch (_) {}
-
     pool.input.addEventListener('input', () => {
       pool.checkBtn.disabled = pool.busy || !pool.input.value.trim();
       if (pool.checkedText !== null && pool.input.value !== pool.checkedText) clearPoolResults();
@@ -814,11 +801,166 @@
       pool.body.querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.checked = pool.selectAll.checked; });
       updatePoolImportState();
     });
-    pool.sendOmni.addEventListener('change', () => { pool.omniFields.hidden = !pool.sendOmni.checked; });
     pool.importBtn.addEventListener('click', importPool);
     pool.list.addEventListener('click', (e) => {
       const btn = e.target.closest('.btn-pool-remove');
       if (btn) removePoolEntry(btn);
+    });
+  }
+
+  // =========================================================================
+  // OmniRoute Sync: read-only comparison
+  // =========================================================================
+
+  const omni = {
+    url: document.getElementById('omni-url'),
+    token: document.getElementById('omni-token'), // kept in memory only, never persisted
+    region: document.getElementById('omni-region'),
+    compareBtn: document.getElementById('btn-omni-compare'),
+    summary: document.getElementById('omni-summary'),
+    results: document.getElementById('omni-results'),
+    accountsBody: document.getElementById('omni-accounts-body'),
+    onlyWrap: document.getElementById('omni-only-wrap'),
+    onlyList: document.getElementById('omni-only-list'),
+    poolStatus: {}, // pool entry id -> { in_omniroute, shared_endpoint } from the last compare
+    lastAccounts: null,
+    lastOnly: null,
+    busy: false,
+  };
+
+  // Returns { url, token } when both are filled in, else null.
+  function omniTarget() {
+    const url = omni.url.value.trim();
+    const token = omni.token.value.trim();
+    return url && token ? { url, token } : null;
+  }
+
+  // Remembers URL and region (not secret) across reloads; the token is never stored.
+  function rememberOmniFields() {
+    try {
+      localStorage.setItem(OMNIROUTE_URL_KEY, omni.url.value.trim());
+      localStorage.setItem(OMNIROUTE_REGION_KEY, omni.region.value.trim());
+    } catch (_) {}
+  }
+
+  function omniPoolBadge(id) {
+    const s = omni.poolStatus[id];
+    if (!s || !s.in_omniroute) return '';
+    return s.shared_endpoint
+      ? '<span class="pool-badge-omni is-shared" title="OmniRoute holds this host:port more than once (different credentials); it hides usernames, so the exact match is unknown">in OmniRoute (shared endpoint)</span>'
+      : '<span class="pool-badge-omni">in OmniRoute</span>';
+  }
+
+  // status -> [label, style]; the level note explains inherited proxies.
+  const OMNI_PROXY_STATUS = {
+    match: ['Same proxy', 'ok'],
+    differs: ['Different proxy', 'warn'],
+    missing_there: ['OmniRoute has no proxy for it', 'failed'],
+    only_there: ['Proxy only in OmniRoute', 'warn'],
+    none: ['Direct on both sides', 'neutral'],
+    invalid_here: ['Invalid proxy here', 'warn'],
+    unknown: ['Could not check', 'warn'],
+  };
+
+  function localProxyCell(a) {
+    if (a.local_proxy_invalid) return '⚠️ invalid (hidden)';
+    return a.local_proxy ? escapeHtml(a.local_proxy) : 'direct';
+  }
+
+  function renderOmniResults() {
+    const accounts = omni.lastAccounts || [];
+    omni.accountsBody.innerHTML = accounts.map(a => {
+      const email = isPrivacyMode ? '[redacted]' : escapeHtml(a.email);
+      if (!a.in_omniroute) {
+        return `
+          <tr>
+            <td>${email}</td>
+            <td><span class="pool-status pool-status-failed">No</span></td>
+            <td class="proxy-cell">${localProxyCell(a)}</td>
+            <td class="proxy-cell">—</td>
+            <td><span class="pool-status pool-status-warn">Not in OmniRoute</span><span class="pool-error">Send it with export-omniroute.</span></td>
+          </tr>`;
+      }
+      const [label, style] = OMNI_PROXY_STATUS[a.proxy_status] || [a.proxy_status, 'neutral'];
+      const inherited = a.omniroute_level === 'provider' || a.omniroute_level === 'global';
+      const notes = [];
+      if (inherited) notes.push(`inherited from the ${a.omniroute_level} setting, shared with other accounts`);
+      if (a.error) notes.push(a.error);
+      return `
+        <tr>
+          <td>${email}</td>
+          <td><span class="pool-status pool-status-ok">Yes</span></td>
+          <td class="proxy-cell">${localProxyCell(a)}</td>
+          <td class="proxy-cell">${a.omniroute_proxy ? escapeHtml(a.omniroute_proxy) : 'direct'}</td>
+          <td><span class="pool-status pool-status-${style}">${escapeHtml(label)}</span>${notes.length ? `<span class="pool-error">${escapeHtml(notes.join(' · '))}</span>` : ''}</td>
+        </tr>`;
+    }).join('') || '<tr><td colspan="5" class="pool-error">No accounts here yet.</td></tr>';
+
+    const only = omni.lastOnly || [];
+    omni.onlyWrap.hidden = only.length === 0;
+    omni.onlyList.innerHTML = only.map(c => {
+      const label = isPrivacyMode ? '[redacted]' : escapeHtml(c.email || c.name || c.connection_id);
+      return `<li><span class="pool-proxy">${label}</span><span class="pool-usage">not in this switcher</span></li>`;
+    }).join('');
+  }
+
+  async function compareOmni() {
+    const target = omniTarget();
+    if (!target) {
+      omni.summary.textContent = 'Fill in the OmniRoute URL and token first.';
+      (omni.url.value.trim() ? omni.token : omni.url).focus();
+      return;
+    }
+    if (omni.busy) return;
+    omni.busy = true;
+    omni.compareBtn.disabled = true;
+    omni.compareBtn.textContent = 'Comparing…';
+    omni.summary.textContent = '';
+    rememberOmniFields();
+    try {
+      const res = await fetch('/api/omniroute/compare', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(target)
+      });
+      if (!res.ok) {
+        omni.summary.textContent = await apiErrorMessage(res);
+        return;
+      }
+      const data = await res.json();
+      omni.lastAccounts = data.accounts || [];
+      omni.lastOnly = data.only_in_omniroute || [];
+      omni.poolStatus = {};
+      for (const p of data.pool || []) omni.poolStatus[p.id] = p;
+
+      const s = data.summary || {};
+      const parts = [
+        `${s.accounts - s.accounts_missing} of ${s.accounts} account(s) in OmniRoute`,
+        `${s.proxy_needs_attention} with a proxy mismatch`,
+        `${s.only_in_omniroute} only in OmniRoute`,
+        `${s.pool_in_omniroute} of ${s.pool} pool proxies already there`,
+      ];
+      omni.summary.textContent = parts.join(' · ');
+      renderOmniResults();
+      omni.results.hidden = false;
+      renderPoolList();
+    } catch (err) {
+      omni.summary.textContent = `Compare failed: ${err.message}`;
+    } finally {
+      omni.busy = false;
+      omni.compareBtn.disabled = false;
+      omni.compareBtn.textContent = 'Compare';
+    }
+  }
+
+  if (omni.url) {
+    try {
+      omni.url.value = localStorage.getItem(OMNIROUTE_URL_KEY) || '';
+      omni.region.value = localStorage.getItem(OMNIROUTE_REGION_KEY) || '';
+    } catch (_) {}
+    omni.compareBtn.addEventListener('click', compareOmni);
+    omni.token.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') compareOmni();
     });
   }
 

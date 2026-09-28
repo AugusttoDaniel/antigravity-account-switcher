@@ -371,24 +371,48 @@ func (a *APIHandler) importProxies(w http.ResponseWriter, r *http.Request) {
 }
 
 // pushToOmniRoute registers each proxy in OmniRoute's registry, reporting failures per line.
+// It upserts, so a proxy OmniRoute already holds (same host, port and username) is reported as
+// "updated" rather than duplicated.
 func (a *APIHandler) pushToOmniRoute(ctx context.Context, target *omnirouteTarget, selected []proxyLine) map[string]any {
-	client := omniroute.NewClient(omniroute.WithBaseURL(target.URL), omniroute.WithToken(target.Token))
 	errs := []lineError{}
-	ok := 0
+	var items []omniroute.RegistryProxy
+	var itemLines []int
 	for _, l := range selected {
 		p, err := omniroute.RegistryProxyFromURL(l.Proxy, target.Region)
-		if err == nil {
-			callCtx, cancel := context.WithTimeout(ctx, omnirouteCallTimeout)
-			err = client.CreateProxy(callCtx, p)
-			cancel()
-		}
 		if err != nil {
 			errs = append(errs, lineError{Line: l.Line, Error: err.Error()})
 			continue
 		}
-		ok++
+		items = append(items, p)
+		itemLines = append(itemLines, l.Line)
 	}
-	return map[string]any{"sent": len(selected), "ok": ok, "failed": len(errs), "errors": errs}
+
+	created, updated := 0, 0
+	if len(items) > 0 {
+		callCtx, cancel := context.WithTimeout(ctx, omnirouteCallTimeout)
+		results, err := omnirouteClient(target).BulkImportProxies(callCtx, items)
+		cancel()
+		if err != nil {
+			for _, line := range itemLines {
+				errs = append(errs, lineError{Line: line, Error: err.Error()})
+			}
+		}
+		for i, r := range results {
+			switch {
+			case !r.Success:
+				errs = append(errs, lineError{Line: itemLines[i], Error: r.Error})
+			case r.Action == "updated":
+				updated++
+			default:
+				created++
+			}
+		}
+	}
+	return map[string]any{"sent": len(selected), "created": created, "updated": updated, "failed": len(errs), "errors": errs}
+}
+
+func omnirouteClient(target *omnirouteTarget) *omniroute.Client {
+	return omniroute.NewClient(omniroute.WithBaseURL(target.URL), omniroute.WithToken(target.Token))
 }
 
 // resolvePoolProxy returns the pool proxy with the given ID for assignment to an account.

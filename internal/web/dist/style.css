@@ -1700,3 +1700,7 @@ body.privacy-mode .blurred-email {
 .pool-list .pool-usage { color: var(--text-muted); white-space: nowrap; }
 .pool-list .pool-usage.is-free { color: var(--color-success); }
 .pool-list .pool-empty { color: var(--text-muted); background: none; padding-left: 0; }
+.pool-status-warn { color: var(--color-warning); background: var(--color-warning-bg); }
+.pool-status-neutral { color: var(--text-muted); background: var(--bg-subtle); }
+.pool-badge-omni { font-size: 0.68rem; padding: 0.05rem 0.4rem; border-radius: var(--radius-pill); white-space: nowrap; color: var(--accent-light); background: var(--accent-subtle); }
+.pool-badge-omni.is-shared { color: var(--color-warning); background: var(--color-warning-bg); }

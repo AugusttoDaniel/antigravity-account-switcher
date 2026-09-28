@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -56,31 +55,6 @@ func workingProxy(t *testing.T, user, pass string) string {
 		}
 	}()
 	return ln.Addr().String()
-}
-
-// fakeOmniRoute records proxy registry calls.
-type fakeOmniRoute struct {
-	mu    sync.Mutex
-	auth  []string
-	hosts []string
-}
-
-func (f *fakeOmniRoute) start(t *testing.T) string {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v1/management/proxies" {
-			http.NotFound(w, r)
-			return
-		}
-		var body map[string]any
-		_ = json.NewDecoder(r.Body).Decode(&body)
-		f.mu.Lock()
-		f.auth = append(f.auth, r.Header.Get("Authorization"))
-		f.hosts = append(f.hosts, body["host"].(string))
-		f.mu.Unlock()
-		w.WriteHeader(http.StatusCreated)
-	}))
-	t.Cleanup(srv.Close)
-	return srv.URL
 }
 
 func TestProxyPool_CheckImportAssignDelete(t *testing.T) {
@@ -169,23 +143,37 @@ func TestProxyPool_CheckImportAssignDelete(t *testing.T) {
 
 	// 2. Import line 2 into the pool and into OmniRoute.
 	omni := &fakeOmniRoute{}
-	var imp struct {
-		Added     int `json:"added"`
-		OmniRoute struct {
-			OK     int `json:"ok"`
-			Failed int `json:"failed"`
+	omniURL := omni.start(t)
+	type importResult struct {
+		Added         int `json:"added"`
+		AlreadyInPool int `json:"already_in_pool"`
+		OmniRoute     struct {
+			Created int `json:"created"`
+			Updated int `json:"updated"`
+			Failed  int `json:"failed"`
 		} `json:"omniroute"`
 	}
-	_ = json.Unmarshal([]byte(call(http.MethodPost, "/api/proxies/import", map[string]any{
-		"text":      text,
-		"lines":     []int{2},
-		"omniroute": map[string]string{"url": omni.start(t), "token": "manage-key", "region": "United Kingdom"},
-	})), &imp)
-	if imp.Added != 1 || imp.OmniRoute.OK != 1 || imp.OmniRoute.Failed != 0 {
-		t.Errorf("import result: %+v", imp)
+	doImport := func() importResult {
+		var imp importResult
+		_ = json.Unmarshal([]byte(call(http.MethodPost, "/api/proxies/import", map[string]any{
+			"text":      text,
+			"lines":     []int{2},
+			"omniroute": map[string]string{"url": omniURL, "token": "manage-key", "region": "United Kingdom"},
+		})), &imp)
+		return imp
 	}
-	if len(omni.hosts) != 1 || omni.hosts[0] != goodHost || omni.auth[0] != "Bearer manage-key" {
-		t.Errorf("OmniRoute calls: hosts=%v auth=%v", omni.hosts, omni.auth)
+	if imp := doImport(); imp.Added != 1 || imp.OmniRoute.Created != 1 || imp.OmniRoute.Failed != 0 {
+		t.Errorf("first import: %+v", imp)
+	}
+	if hosts := omni.registryHosts(); len(hosts) != 1 || hosts[0] != good || omni.auth[0] != "Bearer manage-key" {
+		t.Errorf("OmniRoute registry after import: %v (auth %v)", hosts, omni.auth)
+	}
+	// Re-importing must update the existing OmniRoute entry, not duplicate it, and say so.
+	if imp := doImport(); imp.Added != 0 || imp.AlreadyInPool != 1 || imp.OmniRoute.Updated != 1 || imp.OmniRoute.Created != 0 {
+		t.Errorf("re-import: %+v", imp)
+	}
+	if hosts := omni.registryHosts(); len(hosts) != 1 {
+		t.Errorf("re-import duplicated the OmniRoute entry: %v", hosts)
 	}
 
 	// A settings change must not write the startup snapshot back over the imported pool.

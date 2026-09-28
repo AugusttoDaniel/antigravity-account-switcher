@@ -171,22 +171,7 @@
           </div>
 
           <div class="pool-omniroute">
-            <label class="pool-check-label"><input type="checkbox" id="pool-send-omniroute"> Also send to OmniRoute</label>
-            <div id="pool-omniroute-fields" class="pool-omniroute-fields" hidden>
-              <div class="config-field">
-                <label for="pool-omniroute-url" class="field-label">OmniRoute URL</label>
-                <input id="pool-omniroute-url" class="text-input mono" type="url" placeholder="https://router.example.com" autocomplete="off">
-              </div>
-              <div class="config-field">
-                <label for="pool-omniroute-token" class="field-label">Management token</label>
-                <input id="pool-omniroute-token" class="text-input mono" type="password" placeholder="token with manage scope" autocomplete="off">
-              </div>
-              <div class="config-field">
-                <label for="pool-omniroute-region" class="field-label">Region (optional)</label>
-                <input id="pool-omniroute-region" class="text-input" type="text" placeholder="United Kingdom" autocomplete="off">
-              </div>
-              <p class="field-hint pool-omniroute-hint">The token is used for this import only and is never stored. OmniRoute must be on https unless it runs on this machine.</p>
-            </div>
+            <label class="pool-check-label"><input type="checkbox" id="pool-send-omniroute"> Also send to OmniRoute (uses the connection in OmniRoute Sync below)</label>
           </div>
 
           <div class="config-actions-bar">
@@ -199,6 +184,61 @@
           <span class="section-label">In the pool</span>
         </div>
         <ul id="pool-list" class="pool-list" aria-label="Proxies in the pool"></ul>
+      </div>
+    </section>
+
+    <!-- Section 2.3: OmniRoute Sync. Read-only comparison with an OmniRoute instance; the token
+         lives only in this page's memory and is never stored. -->
+    <section class="panel" aria-labelledby="omni-section-title">
+      <div class="panel-header">
+        <div class="panel-title-group">
+          <h2 id="omni-section-title" class="panel-title">OmniRoute Sync</h2>
+          <p class="panel-description">Compare this switcher with your OmniRoute: which accounts it already has, which proxy it really uses for each one, and which pool proxies it already holds. Comparing never changes anything.</p>
+        </div>
+      </div>
+
+      <div class="pool-card">
+        <div class="pool-omniroute-fields">
+          <div class="config-field">
+            <label for="omni-url" class="field-label">OmniRoute URL</label>
+            <input id="omni-url" class="text-input mono" type="url" placeholder="https://router.example.com" autocomplete="off">
+          </div>
+          <div class="config-field">
+            <label for="omni-token" class="field-label">Management token</label>
+            <input id="omni-token" class="text-input mono" type="password" placeholder="token with manage scope" autocomplete="off">
+          </div>
+          <div class="config-field">
+            <label for="omni-region" class="field-label">Region for sent proxies (optional)</label>
+            <input id="omni-region" class="text-input" type="text" placeholder="United Kingdom" autocomplete="off">
+          </div>
+          <p class="field-hint pool-omniroute-hint">The token stays only while this page is open and is never saved. OmniRoute must be on https unless it runs on this machine.</p>
+        </div>
+        <div class="pool-input-actions">
+          <span id="omni-summary" class="pool-summary" aria-live="polite"></span>
+          <span class="proxy-dialog-spacer"></span>
+          <button id="btn-omni-compare" class="btn btn-primary">Compare</button>
+        </div>
+
+        <div id="omni-results" class="pool-results" hidden>
+          <div class="pool-table-wrap">
+            <table class="pool-table">
+              <thead>
+                <tr>
+                  <th scope="col">Account</th>
+                  <th scope="col">In OmniRoute</th>
+                  <th scope="col">Proxy here</th>
+                  <th scope="col">Proxy in OmniRoute</th>
+                  <th scope="col">Status</th>
+                </tr>
+              </thead>
+              <tbody id="omni-accounts-body"></tbody>
+            </table>
+          </div>
+          <div id="omni-only-wrap" hidden>
+            <span class="section-label">Only in OmniRoute</span>
+            <ul id="omni-only-list" class="pool-list"></ul>
+          </div>
+        </div>
       </div>
     </section>
 

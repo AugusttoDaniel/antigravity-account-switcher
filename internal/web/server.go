@@ -196,6 +196,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.api.HandleProxies(w, r)
 		return
 	}
+	if strings.HasPrefix(path, "/api/omniroute/") {
+		s.api.HandleOmniRoute(w, r)
+		return
+	}
 	if path == "/api/config" {
 		s.api.HandleConfig(w, r)
 		return
