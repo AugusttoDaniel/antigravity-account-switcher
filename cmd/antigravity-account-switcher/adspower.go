@@ -56,7 +56,7 @@ func runAddAccountAdsPower(args []string) {
 	defer cancel()
 
 	accRepo := sqlite.NewAccountRepository(db)
-	oauthService := oauth.NewOAuthService(accRepo, oauth.WithFlowTimeout(*timeout))
+	oauthService := oauth.NewOAuthService(accRepo, oauth.WithFlowTimeout(*timeout), oauth.WithStateTTL(*timeout))
 	ads := adspower.NewClient(adspower.WithBaseURL(*apiURL), adspower.WithAPIKey(*apiKey))
 
 	// Look up any existing account for this email to apply the reuse policy.

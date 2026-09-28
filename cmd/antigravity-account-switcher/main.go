@@ -200,7 +200,10 @@ func runServe(args []string) {
 		proxy.WithQuotaRepository(quotaRepo),
 		proxy.WithModelFallback(cfg.ModelPrimary, cfg.ModelSecondary, cfg.FallbackSecondaryEnabled),
 	)
-	oauthService := oauth.NewOAuthService(accRepo)
+	oauthService := oauth.NewOAuthService(accRepo,
+		oauth.WithFlowTimeout(oauth.InteractiveTimeout),
+		oauth.WithStateTTL(oauth.InteractiveTimeout),
+	)
 
 	// Automatically import existing Antigravity login if pool is empty
 	if importedAcc, err := oauth.AutoImportExistingAccount(ctx, accRepo, oauthService); err == nil && importedAcc != nil {

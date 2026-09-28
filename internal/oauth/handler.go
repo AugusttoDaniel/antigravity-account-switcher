@@ -33,7 +33,11 @@ const (
 	DefaultGoogleTokenURL    = "https://oauth2.googleapis.com/token"
 	DefaultGoogleUserInfoURL = "https://www.googleapis.com/oauth2/v3/userinfo"
 
-	DefaultStateTTL    = 5 * time.Minute
+	DefaultStateTTL = 5 * time.Minute
+	// InteractiveTimeout bounds a sign-in a human completes by hand (2-step verification, passkey
+	// or phone prompts routinely take longer than the 5-minute default). The flow timeout and the
+	// state TTL must move together: an expired state rejects the callback even if the flow waits.
+	InteractiveTimeout = 15 * time.Minute
 	DefaultFlowTimeout = 5 * time.Minute
 	DefaultHTTPTimeout = 15 * time.Second
 )
