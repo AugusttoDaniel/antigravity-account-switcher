@@ -178,6 +178,12 @@ A CLI disponibiliza comandos para supervisão, troca manual e configuração:
   ```bash
   antigravity-account-switcher add-account --no-browser
   ```
+- **Adicionar Conta Sem Vazar o Seu IP:** o botão **Authenticate New Google Account** do dashboard
+  pede primeiro o proxy da conta (do pool, ou digitado), faz a troca de tokens por ele, salva o
+  proxy na conta e mostra o link de login em vez de abrir o seu navegador padrão (esse navegador
+  chega ao Google pelo seu IP real). Abra o link num perfil de navegador que use o mesmo proxy. Pelo
+  terminal, `add-account --proxy <url>` faz o mesmo para a troca de tokens, e `add-account-adspower`
+  isola também a própria página de login.
 - **Especificar Porta Customizada:**
   ```bash
   antigravity-account-switcher launch --port 1831

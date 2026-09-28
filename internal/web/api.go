@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
 	"strconv"
@@ -566,18 +567,70 @@ func (a *APIHandler) HandleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// HandleOAuthStart serves POST/GET /oauth/start.
+// oauthStartRequest is the body of POST /oauth/start.
+type oauthStartRequest struct {
+	// PoolID picks a proxy from the pool by id (its credentials never reach the browser); ProxyURL
+	// is a full proxy URL typed by the user. One of them is required.
+	PoolID   string `json:"pool_id"`
+	ProxyURL string `json:"proxy_url"`
+	// OpenBrowser opens the Google sign-in page in this computer's default browser. It is off by
+	// default: that browser reaches Google from the real IP, so the link is returned instead, to
+	// be opened in a browser profile that uses the same proxy.
+	OpenBrowser bool `json:"open_browser"`
+}
+
+// HandleOAuthStart serves POST /oauth/start: it starts the Google sign-in for a new account.
+//
+// The account must be onboarded through its own proxy. The code exchange and the profile lookup
+// leave through it (they used to leave directly, from the real IP), the proxy is saved on the
+// account, and a request without a usable proxy is refused instead of falling back to a direct
+// connection. The sign-in page itself is opened in the user's own isolated browser profile.
 func (a *APIHandler) HandleOAuthStart(w http.ResponseWriter, r *http.Request) {
 	if a.oauthEngine == nil {
 		writeErrorJSON(w, http.StatusNotImplemented, "OAuth2 engine not configured", nil)
 		return
 	}
+	// Starting a flow is a state change: GET would let any page trigger it with an image tag.
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req oauthStartRequest
+	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		writeErrorJSON(w, http.StatusBadRequest, "invalid request payload", err)
+		return
+	}
+
+	proxyURL := strings.TrimSpace(req.ProxyURL)
+	if id := strings.TrimSpace(req.PoolID); id != "" {
+		resolved, err := a.resolvePoolProxy(id)
+		if err != nil {
+			writeErrorJSON(w, http.StatusBadRequest, "invalid pool_id", err)
+			return
+		}
+		proxyURL = resolved
+	}
+	if proxyURL == "" {
+		writeErrorJSON(w, http.StatusBadRequest, "a proxy is required to add an account",
+			errors.New("sign-in and token exchange would otherwise leave from your real IP; pick a proxy from the pool (use the CLI add-account for a direct login)"))
+		return
+	}
+	if err := egress.ValidateProxyURL(proxyURL); err != nil {
+		writeErrorJSON(w, http.StatusBadRequest, "invalid proxy_url", err)
+		return
+	}
+	maskedProxy, _ := egress.MaskProxyURL(proxyURL)
+
+	var opener oauth.BrowserOpener
+	if !req.OpenBrowser {
+		opener = func(string) error { return nil } // the link is returned to the user instead
+	}
 
 	urlChan := make(chan string, 1)
-
-	// Non-blocking trigger of loopback flow
 	go func() {
-		_, err := a.oauthEngine.StartLoopbackFlow(context.Background(), nil, func(authURL string) {
+		acc, err := a.oauthEngine.StartLoopbackFlowWithProxy(context.Background(), opener, func(authURL string) {
 			select {
 			case urlChan <- authURL:
 			default:
@@ -585,15 +638,34 @@ func (a *APIHandler) HandleOAuthStart(w http.ResponseWriter, r *http.Request) {
 			if a.broadcaster != nil {
 				a.broadcaster.Broadcast(&domain.ProxyEvent{
 					Type:      domain.EventType("oauth_started"),
-					Message:   fmt.Sprintf("OAuth authorization flow initiated: %s", authURL),
+					Message:   fmt.Sprintf("OAuth authorization flow initiated through %s", maskedProxy),
 					Timestamp: time.Now().UTC(),
 				})
 			}
-		})
-		if err != nil && a.broadcaster != nil {
+		}, proxyURL)
+		if err == nil && acc != nil && a.accountRepo != nil {
+			// The exchange already went through the proxy; keep it for every later request.
+			err = a.accountRepo.UpdateProxyURL(context.Background(), acc.ID, proxyURL)
+			if err != nil {
+				err = fmt.Errorf("account %s was added but its proxy could not be saved: %w", acc.Email, err)
+			}
+		}
+		if a.broadcaster == nil {
+			return
+		}
+		if err != nil {
 			a.broadcaster.Broadcast(&domain.ProxyEvent{
 				Type:      domain.EventTypeError,
 				Message:   fmt.Sprintf("OAuth flow failed: %v", err),
+				Timestamp: time.Now().UTC(),
+			})
+			return
+		}
+		if acc != nil {
+			a.broadcaster.Broadcast(&domain.ProxyEvent{
+				Type:      domain.EventType("oauth_completed"),
+				AccountID: acc.ID,
+				Message:   fmt.Sprintf("Account %s added through %s", acc.Email, maskedProxy),
 				Timestamp: time.Now().UTC(),
 			})
 		}
@@ -602,13 +674,14 @@ func (a *APIHandler) HandleOAuthStart(w http.ResponseWriter, r *http.Request) {
 	var generatedAuthURL string
 	select {
 	case generatedAuthURL = <-urlChan:
-	case <-time.After(1 * time.Second):
+	case <-time.After(2 * time.Second):
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"status":   "started",
-		"message":  "OAuth loopback flow initiated in browser",
-		"auth_url": generatedAuthURL,
+		"status":         "started",
+		"auth_url":       generatedAuthURL,
+		"proxy":          maskedProxy,
+		"browser_opened": req.OpenBrowser,
 	})
 }
 

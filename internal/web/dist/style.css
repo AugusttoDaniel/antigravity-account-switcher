@@ -1704,3 +1704,11 @@ body.privacy-mode .blurred-email {
 .pool-status-neutral { color: var(--text-muted); background: var(--bg-subtle); }
 .pool-badge-omni { font-size: 0.68rem; padding: 0.05rem 0.4rem; border-radius: var(--radius-pill); white-space: nowrap; color: var(--accent-light); background: var(--accent-subtle); }
 .pool-badge-omni.is-shared { color: var(--color-warning); background: var(--color-warning-bg); }
+
+/* Add-account dialog */
+.proxy-dialog-open { display: flex; align-items: flex-start; gap: 0.45rem; margin-top: 0.7rem; }
+.proxy-dialog-open input { margin-top: 0.15rem; }
+.proxy-dialog-open em { color: var(--color-warning); font-style: normal; }
+.oauth-dialog-link { margin-top: 0.9rem; }
+.oauth-dialog-url-row { display: flex; gap: 0.5rem; }
+.oauth-dialog-url-row .text-input { flex: 1; min-width: 0; }
