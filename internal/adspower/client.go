@@ -226,6 +226,29 @@ func (c *Client) ListProfiles(ctx context.Context, page, pageSize int) ([]Profil
 	return out.List, nil
 }
 
+// GetProfile returns a single profile by its user_id, including its proxy configuration. On the
+// ADS Power free plan the underlying user/list endpoint is gated and this returns an APIError.
+func (c *Client) GetProfile(ctx context.Context, userID string) (*Profile, error) {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return nil, fmt.Errorf("adspower: empty user_id")
+	}
+	q := url.Values{}
+	q.Set("user_id", userID)
+	q.Set("page_size", "1")
+
+	var out struct {
+		List []Profile `json:"list"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/api/v1/user/list", q, nil, &out); err != nil {
+		return nil, err
+	}
+	if len(out.List) == 0 {
+		return nil, fmt.Errorf("adspower: profile %s not found", userID)
+	}
+	return &out.List[0], nil
+}
+
 // CreateProfile creates a new isolated profile and returns its user_id.
 func (c *Client) CreateProfile(ctx context.Context, req CreateProfileRequest) (string, error) {
 	if strings.TrimSpace(req.GroupID) == "" {
