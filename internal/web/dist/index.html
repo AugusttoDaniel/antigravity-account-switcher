@@ -141,13 +141,13 @@
       <div class="pool-card">
         <label for="pool-input" class="field-label">Proxy list</label>
         <textarea id="pool-input" class="pool-input text-input mono" rows="6" spellcheck="false" autocomplete="off"
-          placeholder="One per line, any of:&#10;1.2.3.4:8080:user:pass&#10;http://user:pass@host:port&#10;socks5://host:1080"></textarea>
+          placeholder="Paste the proxy table copied from your provider's panel (e.g. Webshare), or one proxy per line:&#10;1.2.3.4:8080:user:pass&#10;http://user:pass@host:port&#10;socks5://host:1080"></textarea>
         <div class="pool-input-actions">
           <label class="btn btn-secondary pool-file-btn">
             Load .txt
             <input type="file" id="pool-file" accept=".txt,text/plain" hidden>
           </label>
-          <span class="field-hint">Or drop a .txt on the box. Lines starting with # are ignored.</span>
+          <span class="field-hint">Or drop a .txt on the box. The panel table format is detected automatically; lines starting with # are ignored.</span>
           <span class="proxy-dialog-spacer"></span>
           <button id="btn-pool-check" class="btn btn-primary" disabled>Validate</button>
         </div>

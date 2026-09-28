@@ -40,25 +40,6 @@ type proxyLine struct {
 	Err   error
 }
 
-// parseProxyList splits a pasted list into proxy lines, skipping blanks and '#' comments and keeping
-// the original line numbers so results can point back at the input.
-func parseProxyList(text string) ([]proxyLine, error) {
-	text = strings.TrimPrefix(text, string(rune(0xFEFF))) // BOM left by some editors and PowerShell
-	var out []proxyLine
-	for i, raw := range strings.Split(text, "\n") {
-		s := strings.TrimSpace(raw)
-		if s == "" || strings.HasPrefix(s, "#") {
-			continue
-		}
-		if len(out) == maxProxyLines {
-			return nil, fmt.Errorf("too many proxies: at most %d per request", maxProxyLines)
-		}
-		u, err := egress.ParseProxyLine(s)
-		out = append(out, proxyLine{Line: i + 1, Proxy: u, Err: err})
-	}
-	return out, nil
-}
-
 // maskedProxy is the display form of a proxy the API may return.
 func maskedProxy(u *url.URL) string {
 	masked, _ := egress.MaskProxyURL(u.String())
