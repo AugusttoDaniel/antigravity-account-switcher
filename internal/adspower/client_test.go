@@ -93,6 +93,44 @@ func TestListProfilesParsesProxy(t *testing.T) {
 	}
 }
 
+func TestGetProfileReturnsProxy(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("user_id") != "prof-9" {
+			t.Errorf("expected user_id filter, got %q", r.URL.Query().Get("user_id"))
+		}
+		writeEnvelope(t, w, 0, "success", map[string]any{
+			"list": []map[string]any{
+				{
+					"user_id": "prof-9",
+					"name":    "acct-z",
+					"user_proxy_config": map[string]any{
+						"proxy_soft": "other", "proxy_type": "http",
+						"proxy_host": "p.example", "proxy_port": "8080",
+						"proxy_user": "u", "proxy_password": "pw",
+					},
+				},
+			},
+		})
+	})
+
+	p, err := c.GetProfile(context.Background(), "prof-9")
+	if err != nil {
+		t.Fatalf("GetProfile: %v", err)
+	}
+	if got := p.ProxyConfig.URL(); got != "http://u:pw@p.example:8080" {
+		t.Errorf("proxy url: got %q", got)
+	}
+}
+
+func TestGetProfileGatedIsAPIError(t *testing.T) {
+	c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		writeEnvelope(t, w, -1, "This feature is only available in paid subscriptions.", nil)
+	})
+	if _, err := c.GetProfile(context.Background(), "prof-9"); err == nil {
+		t.Error("expected APIError when user/list is gated")
+	}
+}
+
 func TestCreateProfileSendsProxyAndReturnsID(t *testing.T) {
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/user/create" {

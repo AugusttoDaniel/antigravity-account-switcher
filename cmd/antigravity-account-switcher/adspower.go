@@ -70,15 +70,26 @@ func runAddAccountAdsPower(args []string) {
 	// 1. Decide the proxy.
 	var proxyURL string
 	if explicitProfile != "" {
-		// Free-plan path: an existing profile already owns its proxy inside ADS Power, so we do not
-		// draw from the pool. Route the server-side code exchange through --proxy (or the account's
-		// stored proxy) so it egresses from the same IP as the profile browser.
+		// An existing profile already owns its proxy inside ADS Power, so we do not draw from the
+		// pool. Prefer --proxy, then the account's stored proxy, then the profile's own proxy read
+		// from ADS Power (so the account is bound by default and the server-side exchange/refresh
+		// egress from the same IP as the profile browser).
 		proxyURL = strings.TrimSpace(*proxyOverride)
 		if proxyURL == "" {
 			proxyURL = existingProxy
 		}
 		if proxyURL == "" {
-			fmt.Fprintln(os.Stderr, "Warning: no --proxy and no stored proxy; the OAuth code exchange will egress directly (the profile browser still uses its own proxy). Pass --proxy to match the profile's proxy.")
+			if p, gErr := ads.GetProfile(ctx, explicitProfile); gErr == nil && p != nil {
+				if u := p.ProxyConfig.URL(); u != "" {
+					proxyURL = u
+					fmt.Printf("Bound the profile's proxy from ADS Power: %s\n", maskProxy(proxyURL))
+				}
+			} else if gErr != nil {
+				fmt.Fprintf(os.Stderr, "Note: could not read the profile's proxy from ADS Power (%v).\n", gErr)
+			}
+		}
+		if proxyURL == "" {
+			fmt.Fprintln(os.Stderr, "Warning: no proxy bound; the server-side token exchange/refresh will egress directly (the profile browser still uses its own proxy). Pass --proxy to bind it.")
 		}
 	} else {
 		// explicit override > existing account's proxy > a never-used pool proxy.
