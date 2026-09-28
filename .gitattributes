@@ -1,0 +1,31 @@
+# Normalize line endings across platforms: text files are LF in the repository and in the
+# working tree, regardless of a contributor's global core.autocrlf setting. This keeps a pure-Go,
+# gofmt'd codebase byte-identical everywhere and stops Windows checkouts from showing every file
+# as "modified".
+* text=auto eol=lf
+
+# Shell scripts must stay LF to remain executable.
+*.sh text eol=lf
+
+# Windows batch/PowerShell scripts are conventionally CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Treat known binaries as binary (never normalize or diff as text).
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.pdf binary
+*.gz binary
+*.tgz binary
+*.zip binary
+*.exe binary
+*.dll binary
+*.so binary
+*.dylib binary
+*.db binary
+*.sqlite binary
