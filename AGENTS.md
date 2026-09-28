@@ -14,39 +14,6 @@ The switcher runs as a high-performance local supervisor that:
 
 ---
 
-## Antigravity 2.0 Runtime Insights (Reverse Engineering)
-
-Understanding the internal design of Google Antigravity 2.0 is crucial when diagnosing bugs or extending functionality:
-
-- **Runtime Composition**: Google Antigravity 2.0 is an **Electron** desktop application bundled with a native background backend process named **`language_server` (compiled Go binary)**.
-- **Local Language Server Discovery**:
-  - The Electron frontend spawns `language_server` with the flag `--csrf_token <token>`.
-  - The frontend communicates with `language_server` over localhost TCP sockets using HTTP/gRPC-Web endpoints (e.g. `/exa.language_server_pb.LanguageServerService/RetrieveUserQuotaSummary`).
-  - All local requests require the header `x-codeium-csrf-token: <csrf_token>`.
-  - The switcher discovers running `language_server` instances by inspecting `/proc/<pid>/cmdline`, socket inodes in `/proc/<pid>/fd`, and listening ports in `/proc/net/tcp` (see `internal/quota/language_server.go`).
-- **Binary Resolution Priority**:
-  When locating the Antigravity 2.0 binary to launch or supervise, inspect paths in this exact order:
-  1. Saved configuration: `~/.config/antigravity-account-switcher/config.json` (`antigravity_bin` key).
-  2. Environment variable: `ANTIGRAVITY_BIN`.
-  3. User XDG directories: `~/.local/bin/antigravity`, `~/.local/share/antigravity/antigravity`.
-  4. User tools directory: `~/tools/Antigravity/Antigravity-x64/antigravity`.
-  5. System FHS paths: `/opt/antigravity/antigravity`, `/usr/local/bin/antigravity`.
-  6. System `$PATH`: `antigravity`, `agy`.
-- **Existing Credentials (Auto-Import)**:
-  - Antigravity stores active Google OAuth credentials in `~/.gemini/antigravity-acp/acp_token.json` or `~/.gemini/antigravity-cli/acp_token.json`.
-  - The switcher automatically imports these credentials if the account pool is empty on first boot (`internal/oauth/auto_import.go`).
-- **Electron Auto-Updater (`APPIMAGE`)**:
-  - On Linux, Antigravity 2.0 uses Electron's `AppImageUpdater`. When extracted from `.tar.gz` without an AppImage runtime, in-app `Help -> Check for Updates` fails with `ERR_UPDATER_OLD_FILE_NOT_FOUND` if `process.env.APPIMAGE` is missing.
-  - The supervisor explicitly injects `APPIMAGE=<antigravity_bin_path>` into the child process environment to allow seamless updates.
-- **Voice & Speech-to-Text (`speech.googleapis.com`)**:
-  - Antigravity communicates with `speech.googleapis.com` for voice input.
-  - To prevent interference, the supervisor injects `NO_PROXY=speech.googleapis.com` and provides raw bidirectional RFC 7231 TCP tunneling on HTTP `CONNECT` requests.
-- **Model Quotas & Intra-Family Fallback**:
-  - In Google Cloud Code PA (`daily-cloudcode-pa.googleapis.com`), different models within the same provider family (e.g. `gemini-2.5-pro` and `gemini-2.5-flash`) operate under separate quota buckets.
-  - The fallback engine and configuration validation must allow intra-family model fallback as long as primary and secondary models are distinct (`primary != secondary`).
-
----
-
 ## Macro Architecture & Design Invariants
 
 The codebase adheres strictly to **Clean Architecture / Hexagonal Principles**:

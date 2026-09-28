@@ -9,6 +9,11 @@
 
 Automatic Multi-Account Pool Management, Real-Time Quota Tracking, and Seamless HTTP 429 Failover for **Google Antigravity 2.0** and CLI (`agy`).
 
+> [!WARNING]
+> **Disclaimer — interoperability & educational use only.**
+> This is an independent, unofficial project. It is **not affiliated with, authorized, or endorsed by** Google, ADS Power, AliasMode, OmniRoute, or any other third party; all trademarks belong to their respective owners.
+> The tool interoperates with third-party services that each have their own Terms of Service. Automating sign-in, pooling/rotating multiple accounts to work around rate limits, and using antidetect browser profiles **may violate those Terms** and can result in account suspension or other consequences. **You are solely responsible** for ensuring your use complies with all applicable terms, laws, and regulations. The software is provided "AS IS", without warranty and with no liability to the authors — see [LICENSE](LICENSE).
+
 ---
 
 ## What is Antigravity 2.0 and why is this needed?
@@ -392,4 +397,4 @@ Maintained and updated by **[AugusttoDaniel](https://github.com/AugusttoDaniel)*
 
 ## License
 
-MIT License © 2026 Muriel Gasparini. See [LICENSE](LICENSE) for details.
+MIT License © 2026 Muriel Gasparini and © 2026 Daniel Augusto Silva. See [LICENSE](LICENSE) for details.

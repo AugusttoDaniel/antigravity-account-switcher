@@ -9,6 +9,11 @@
 
 Gerenciamento automático de pool de contas, monitoramento de cotas em tempo real e failover transparente em erros HTTP 429 para o **Google Antigravity 2.0** e CLI (`agy`).
 
+> [!WARNING]
+> **Aviso — uso apenas para interoperabilidade e fins educacionais.**
+> Este é um projeto independente e não oficial. **Não é afiliado, autorizado ou endossado** pelo Google, ADS Power, AliasMode, OmniRoute ou qualquer terceiro; todas as marcas pertencem aos seus respectivos donos.
+> A ferramenta interopera com serviços de terceiros que possuem seus próprios Termos de Serviço. Automatizar login, agrupar/rotacionar várias contas para contornar limites de requisição e usar perfis de navegador antidetect **pode violar esses Termos** e resultar em suspensão de contas ou outras consequências. **Você é o único responsável** por garantir que seu uso esteja em conformidade com todos os termos, leis e regulamentos aplicáveis. O software é fornecido "COMO ESTÁ", sem garantias e sem responsabilidade dos autores — veja [LICENSE](LICENSE).
+
 ---
 
 ## O que é o Antigravity 2.0 e por que esta ferramenta é necessária?
@@ -390,4 +395,4 @@ Mantido e atualizado por **[AugusttoDaniel](https://github.com/AugusttoDaniel)**
 
 ## Licença
 
-Distribuído sob a licença MIT © 2026 Muriel Gasparini. Veja [LICENSE](LICENSE) para mais detalhes.
+Distribuído sob a licença MIT © 2026 Muriel Gasparini e © 2026 Daniel Augusto Silva. Veja [LICENSE](LICENSE) para mais detalhes.
