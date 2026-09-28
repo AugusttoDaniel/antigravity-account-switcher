@@ -885,6 +885,7 @@
       const inherited = a.omniroute_level === 'provider' || a.omniroute_level === 'global';
       const notes = [];
       if (inherited) notes.push(`inherited from the ${a.omniroute_level} setting, shared with other accounts`);
+      if (a.omniroute_connections > 1) notes.push(`${a.omniroute_connections} connections for this account in OmniRoute (duplicate)`);
       if (a.error) notes.push(a.error);
       return `
         <tr>

@@ -257,6 +257,11 @@ func validateOmniRouteURL(raw string) error {
 	if err != nil || u.Host == "" {
 		return errors.New("not a valid URL (e.g. https://router.example.com)")
 	}
+	// Management routes live at the root; a path such as the OpenAI-compatible /v1 base would be
+	// prefixed to every call and fail with an opaque 404.
+	if p := strings.TrimRight(u.Path, "/"); p != "" {
+		return fmt.Errorf("use the OmniRoute root URL (%s://%s), without the %q path", u.Scheme, u.Host, p)
+	}
 	switch u.Scheme {
 	case "https":
 		return nil
@@ -370,11 +375,14 @@ func (a *APIHandler) pushToOmniRoute(ctx context.Context, target *omnirouteTarge
 
 	created, updated := 0, 0
 	if len(items) > 0 {
-		callCtx, cancel := context.WithTimeout(ctx, omnirouteCallTimeout)
+		// One call budget per bulk request, not one for the whole import.
+		chunks := (len(items) + omniroute.MaxBulkProxies - 1) / omniroute.MaxBulkProxies
+		callCtx, cancel := context.WithTimeout(ctx, time.Duration(chunks)*omnirouteCallTimeout)
 		results, err := omnirouteClient(target).BulkImportProxies(callCtx, items)
 		cancel()
 		if err != nil {
-			for _, line := range itemLines {
+			// Results cover the chunks OmniRoute already applied; only the rest failed.
+			for _, line := range itemLines[len(results):] {
 				errs = append(errs, lineError{Line: line, Error: err.Error()})
 			}
 		}

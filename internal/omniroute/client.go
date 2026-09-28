@@ -254,7 +254,8 @@ type BulkProxyResult struct {
 // /api/settings/proxies/bulk-import, keyed by host+port+username: an existing proxy is updated
 // instead of duplicated, and its result says so ("updated"). (POST /api/v1/management/proxies
 // always inserts, so re-sending through it duplicates entries.) Results come back one per input,
-// in order; the token needs management scope.
+// in order; the token needs management scope. On error, the results of the chunks that already
+// succeeded are still returned, since OmniRoute has applied them.
 func (c *Client) BulkImportProxies(ctx context.Context, proxies []RegistryProxy) ([]BulkProxyResult, error) {
 	out := make([]BulkProxyResult, 0, len(proxies))
 	for start := 0; start < len(proxies); start += MaxBulkProxies {
@@ -263,10 +264,10 @@ func (c *Client) BulkImportProxies(ctx context.Context, proxies []RegistryProxy)
 			Results []BulkProxyResult `json:"results"`
 		}
 		if err := c.do(ctx, http.MethodPost, "/api/settings/proxies/bulk-import", map[string]any{"items": chunk}, &resp); err != nil {
-			return nil, scrubPasswords(err, chunk)
+			return out, scrubPasswords(err, chunk)
 		}
 		if len(resp.Results) != len(chunk) {
-			return nil, fmt.Errorf("omniroute: bulk import returned %d results for %d proxies", len(resp.Results), len(chunk))
+			return out, fmt.Errorf("omniroute: bulk import returned %d results for %d proxies", len(resp.Results), len(chunk))
 		}
 		for i := range resp.Results {
 			resp.Results[i].Error = scrubPasswords(errors.New(resp.Results[i].Error), chunk).Error()
@@ -347,13 +348,15 @@ func (c *Client) ListConnections(ctx context.Context, provider string) ([]Connec
 
 // ResolvedProxy is the proxy OmniRoute effectively uses for a connection, and the level it comes
 // from: "account"/"key" (bound to that connection), "provider" or "global" (inherited, shared with
-// other connections), "apiKey", or "direct" (no proxy). Credentials are not decoded.
+// other connections), "apiKey", or "direct" (no proxy). The password is not decoded; the username is, since proxies sharing a gateway
+// endpoint differ only by it.
 type ResolvedProxy struct {
 	Level string `json:"level"`
 	Proxy *struct {
-		Type string   `json:"type"`
-		Host string   `json:"host"`
-		Port flexPort `json:"port"`
+		Type     string   `json:"type"`
+		Host     string   `json:"host"`
+		Port     flexPort `json:"port"`
+		Username string   `json:"username"`
 	} `json:"proxy"`
 }
 

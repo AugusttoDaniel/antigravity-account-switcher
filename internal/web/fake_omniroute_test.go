@@ -74,7 +74,13 @@ func (f *fakeOmniRoute) start(t *testing.T) string {
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"items": items, "page": map[string]any{"total": len(items)}})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/providers":
-			_ = json.NewEncoder(w).Encode(map[string]any{"connections": f.conns, "total": len(f.conns)})
+			conns := []map[string]any{}
+			for _, c := range f.conns {
+				if c["provider"] == r.URL.Query().Get("provider") {
+					conns = append(conns, c)
+				}
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"connections": conns, "total": len(conns)})
 		default:
 			http.NotFound(w, r)
 		}

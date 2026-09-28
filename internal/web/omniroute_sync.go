@@ -40,16 +40,19 @@ const (
 )
 
 type accountSync struct {
-	AccountID      string `json:"account_id"`
-	Email          string `json:"email"`
-	InOmniRoute    bool   `json:"in_omniroute"`
-	ConnectionID   string `json:"connection_id,omitempty"`
-	LocalProxy     string `json:"local_proxy,omitempty"` // masked
-	LocalInvalid   bool   `json:"local_proxy_invalid,omitempty"`
-	OmniRouteProxy string `json:"omniroute_proxy,omitempty"` // type://host:port, never credentials
-	OmniRouteLevel string `json:"omniroute_level,omitempty"` // where OmniRoute's proxy comes from
-	ProxyStatus    string `json:"proxy_status,omitempty"`
-	Error          string `json:"error,omitempty"`
+	AccountID    string `json:"account_id"`
+	Email        string `json:"email"`
+	InOmniRoute  bool   `json:"in_omniroute"`
+	ConnectionID string `json:"connection_id,omitempty"`
+	// OmniRouteConnections counts the connections OmniRoute holds for this email when there is
+	// more than one (a duplicate there); the proxy comparison uses the first.
+	OmniRouteConnections int    `json:"omniroute_connections,omitempty"`
+	LocalProxy           string `json:"local_proxy,omitempty"` // masked
+	LocalInvalid         bool   `json:"local_proxy_invalid,omitempty"`
+	OmniRouteProxy       string `json:"omniroute_proxy,omitempty"` // type://host:port, never credentials
+	OmniRouteLevel       string `json:"omniroute_level,omitempty"` // where OmniRoute's proxy comes from
+	ProxyStatus          string `json:"proxy_status,omitempty"`
+	Error                string `json:"error,omitempty"`
 }
 
 type omnirouteOnlyAccount struct {
@@ -127,10 +130,16 @@ func (a *APIHandler) compareWithOmniRoute(w http.ResponseWriter, r *http.Request
 	client := omnirouteClient(&target)
 	listCtx, cancel := context.WithTimeout(ctx, omnirouteCallTimeout)
 	defer cancel()
-	conns, err := client.ListConnections(listCtx, "agy")
-	if err != nil {
-		writeErrorJSON(w, http.StatusBadGateway, "could not list OmniRoute accounts", err)
-		return
+	// OmniRoute keeps Google accounts under two providers: "agy" (imported from here) and
+	// "antigravity" (its own Antigravity login).
+	var conns []omniroute.Connection
+	for _, provider := range []string{"agy", "antigravity"} {
+		list, err := client.ListConnections(listCtx, provider)
+		if err != nil {
+			writeErrorJSON(w, http.StatusBadGateway, "could not list OmniRoute accounts", err)
+			return
+		}
+		conns = append(conns, list...)
 	}
 	registry, err := client.ListProxies(listCtx)
 	if err != nil {
@@ -139,13 +148,15 @@ func (a *APIHandler) compareWithOmniRoute(w http.ResponseWriter, r *http.Request
 	}
 
 	// Accounts: match by email (OmniRoute names imported accounts after their email too).
-	byEmail := make(map[string]omniroute.Connection, len(conns))
+	// Every connection of an email is kept, so duplicates are reported instead of being listed as
+	// unknown here.
+	byEmail := make(map[string][]omniroute.Connection, len(conns))
 	for _, c := range conns {
+		keys := map[string]bool{}
 		for _, key := range []string{c.Email, c.Name} {
-			if k := strings.ToLower(strings.TrimSpace(key)); k != "" {
-				if _, taken := byEmail[k]; !taken {
-					byEmail[k] = c
-				}
+			if k := strings.ToLower(strings.TrimSpace(key)); k != "" && !keys[k] {
+				keys[k] = true
+				byEmail[k] = append(byEmail[k], c)
 			}
 		}
 	}
@@ -159,9 +170,14 @@ func (a *APIHandler) compareWithOmniRoute(w http.ResponseWriter, r *http.Request
 		var valid bool
 		row.LocalProxy, valid = egress.MaskProxyURL(acc.ProxyURL)
 		row.LocalInvalid = !valid
-		if c, ok := byEmail[strings.ToLower(strings.TrimSpace(acc.Email))]; ok {
-			row.InOmniRoute, row.ConnectionID = true, c.ID
-			matched[c.ID] = true
+		if cs := byEmail[strings.ToLower(strings.TrimSpace(acc.Email))]; len(cs) > 0 {
+			row.InOmniRoute, row.ConnectionID = true, cs[0].ID
+			if len(cs) > 1 {
+				row.OmniRouteConnections = len(cs)
+			}
+			for _, c := range cs {
+				matched[c.ID] = true
+			}
 		}
 		rows = append(rows, row)
 	}
@@ -263,8 +279,11 @@ func compareAccountProxy(row *accountSync, localProxy string, resolved omniroute
 		if typ == "" {
 			typ = "http"
 		}
-		remote = endpointKey(resolved.Proxy.Host, int(resolved.Proxy.Port))
-		row.OmniRouteProxy = typ + "://" + remote
+		endpoint := endpointKey(resolved.Proxy.Host, int(resolved.Proxy.Port))
+		row.OmniRouteProxy = typ + "://" + endpoint
+		// The username is part of the identity: sessions on one gateway endpoint (e.g. Webshare's
+		// rotating p.webshare.io:80) differ only by it and leave from different IPs.
+		remote = endpoint + "|" + resolved.Proxy.Username
 	}
 
 	var local string
@@ -274,7 +293,7 @@ func compareAccountProxy(row *accountSync, localProxy string, resolved omniroute
 			row.ProxyStatus = proxyInvalidHere
 			return
 		}
-		local = endpointKeyOf(u)
+		local = endpointKeyOf(u) + "|" + u.User.Username()
 	}
 
 	switch {

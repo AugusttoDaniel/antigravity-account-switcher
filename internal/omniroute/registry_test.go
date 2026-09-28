@@ -161,3 +161,37 @@ func TestResolveConnectionProxy(t *testing.T) {
 		t.Fatalf("direct: %+v (err %v)", got, err)
 	}
 }
+
+// A failing chunk must not discard the chunks OmniRoute already applied.
+func TestBulkImportProxies_KeepsResultsOfAppliedChunks(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls > 1 {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		var body struct {
+			Items []RegistryProxy `json:"items"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		results := make([]map[string]any, len(body.Items))
+		for i := range results {
+			results[i] = map[string]any{"success": true, "action": "created"}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"results": results})
+	}))
+	defer srv.Close()
+
+	proxies := make([]RegistryProxy, 150)
+	for i := range proxies {
+		proxies[i] = RegistryProxy{Name: "p", Type: "http", Host: "1.2.3.4", Port: 1000 + i}
+	}
+	res, err := NewClient(WithBaseURL(srv.URL)).BulkImportProxies(context.Background(), proxies)
+	if err == nil {
+		t.Fatal("expected the second chunk's error")
+	}
+	if len(res) != MaxBulkProxies {
+		t.Errorf("got %d results, want the %d of the applied first chunk", len(res), MaxBulkProxies)
+	}
+}
