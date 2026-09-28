@@ -46,6 +46,9 @@ func (m *mockAccountRepo) UpdateToken(ctx context.Context, id string, accessToke
 func (m *mockAccountRepo) UpdateRefreshToken(ctx context.Context, id string, refreshToken string) error {
 	return nil
 }
+func (m *mockAccountRepo) UpdateProxyURL(ctx context.Context, id string, proxyURL string) error {
+	return nil
+}
 func (m *mockAccountRepo) Delete(ctx context.Context, id string) error { return nil }
 func (m *mockAccountRepo) GetNextAvailable(ctx context.Context, excludeID string) (*domain.Account, error) {
 	return nil, nil

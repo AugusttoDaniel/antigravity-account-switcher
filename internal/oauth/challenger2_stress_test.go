@@ -39,13 +39,16 @@ func setupTestStore(t *testing.T) (*sqlite.DB, *sqlite.AccountRepository) {
 // 1. Concurrent authorization flows on multiple ephemeral ports
 // -----------------------------------------------------------------------------
 func TestChallenger2_ConcurrentLoopbackFlows(t *testing.T) {
-	// Custom mock server that generates unique emails per token
+	// Custom mock server that generates unique emails per token. A monotonic counter
+	// guarantees uniqueness even on platforms with coarse clock resolution (e.g. Windows),
+	// where concurrent time.Now().UnixNano() calls can collide.
+	var tokenSeq atomic.Int64
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json; charset=UTF-8")
 		switch r.URL.Path {
 		case "/token":
 			w.WriteHeader(http.StatusOK)
-			tok := fmt.Sprintf("tok_%d", time.Now().UnixNano())
+			tok := fmt.Sprintf("tok_%d", tokenSeq.Add(1))
 			_ = json.NewEncoder(w).Encode(oauth.TokenResponse{
 				AccessToken:  tok,
 				TokenType:    "Bearer",

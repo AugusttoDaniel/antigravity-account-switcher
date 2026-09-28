@@ -133,6 +133,18 @@ func (m *mockAccountRepo) UpdateRefreshToken(ctx context.Context, id string, ref
 	return nil
 }
 
+func (m *mockAccountRepo) UpdateProxyURL(ctx context.Context, id string, proxyURL string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	acc, ok := m.accounts[id]
+	if !ok {
+		return domain.ErrAccountNotFound
+	}
+	acc.ProxyURL = proxyURL
+	acc.UpdatedAt = time.Now().UTC()
+	return nil
+}
+
 func (m *mockAccountRepo) Delete(ctx context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
