@@ -8,6 +8,8 @@ package proxypool
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -89,6 +91,85 @@ func (p *StaticPool) Allocate(ctx context.Context) (string, error) {
 		}
 	}
 	return "", ErrExhausted
+}
+
+// ID is a short, stable identifier for a pool entry, derived from its normalized URL. It lets the
+// dashboard refer to an entry without ever holding the credentials inside it.
+func ID(proxy string) string {
+	sum := sha256.Sum256([]byte(normalize(proxy)))
+	return hex.EncodeToString(sum[:])[:12]
+}
+
+// Entry is one pool proxy and the account currently bound to it, if any.
+type Entry struct {
+	ID     string
+	URL    string // raw proxy URL, credentials included; never send it to a client as-is
+	UsedBy string // email of the account bound to this proxy, "" when free
+}
+
+// Entries lists the pool in order with each proxy's current binding. Blank and duplicate
+// candidates are dropped, as in NewStaticPool.
+func Entries(candidates []string, accounts []*domain.Account) []Entry {
+	usedBy := make(map[string]string, len(accounts))
+	for _, a := range accounts {
+		if a == nil {
+			continue
+		}
+		if proxy := strings.TrimSpace(a.ProxyURL); proxy != "" {
+			usedBy[normalize(proxy)] = a.Email
+		}
+	}
+	pool := NewStaticPool(candidates, nil).candidates
+	out := make([]Entry, 0, len(pool))
+	for _, c := range pool {
+		out = append(out, Entry{ID: ID(c), URL: c, UsedBy: usedBy[normalize(c)]})
+	}
+	return out
+}
+
+// Merge appends the proxies in add that the pool does not already hold, preserving order, and
+// reports how many were added.
+func Merge(existing, add []string) (merged []string, added int) {
+	merged = NewStaticPool(existing, nil).candidates
+	seen := make(map[string]bool, len(merged)+len(add))
+	for _, c := range merged {
+		seen[normalize(c)] = true
+	}
+	for _, c := range add {
+		c = strings.TrimSpace(c)
+		if c == "" || seen[normalize(c)] {
+			continue
+		}
+		seen[normalize(c)] = true
+		merged = append(merged, c)
+		added++
+	}
+	return merged, added
+}
+
+// Find returns the pool proxy with the given ID.
+func Find(existing []string, id string) (string, bool) {
+	for _, c := range NewStaticPool(existing, nil).candidates {
+		if ID(c) == id {
+			return c, true
+		}
+	}
+	return "", false
+}
+
+// Remove drops the pool proxy with the given ID, reporting whether it was present.
+func Remove(existing []string, id string) ([]string, bool) {
+	pool := NewStaticPool(existing, nil).candidates
+	out := make([]string, 0, len(pool))
+	removed := false
+	for _, c := range pool {
+		if ID(c) == id {
+			removed = true
+			continue
+		}
+		out = append(out, c)
+	}
+	return out, removed
 }
 
 // normalize produces a comparison key so trivially different spellings of the same proxy

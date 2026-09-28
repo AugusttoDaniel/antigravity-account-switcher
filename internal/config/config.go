@@ -161,6 +161,85 @@ func Save(cfg *Config) error {
 	return nil
 }
 
+// StoredProxies returns the proxy pool exactly as stored in the config file (no environment
+// overrides apply to it). A missing file yields an empty pool.
+func StoredProxies() ([]string, error) {
+	raw, err := readRawConfig()
+	if err != nil {
+		return nil, err
+	}
+	return decodeProxies(raw)
+}
+
+// UpdateProxies rewrites only the "proxies" key of the config file, leaving every other key as
+// stored: unlike Load+Save, it never persists environment or command-line overrides. fn receives
+// the stored pool and returns the new one. Callers serialise concurrent updates.
+func UpdateProxies(fn func([]string) ([]string, error)) ([]string, error) {
+	raw, err := readRawConfig()
+	if err != nil {
+		return nil, err
+	}
+	current, err := decodeProxies(raw)
+	if err != nil {
+		return nil, err
+	}
+	next, err := fn(current)
+	if err != nil {
+		return nil, err
+	}
+	if len(next) == 0 {
+		delete(raw, "proxies")
+	} else {
+		encoded, err := json.Marshal(next)
+		if err != nil {
+			return nil, fmt.Errorf("failed to encode proxies: %w", err)
+		}
+		raw["proxies"] = encoded
+	}
+
+	data, err := json.MarshalIndent(raw, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode config: %w", err)
+	}
+	// Same owner-only permissions as Save: the pool holds proxy credentials.
+	if err := os.MkdirAll(ConfigDir(), 0o700); err != nil {
+		return nil, fmt.Errorf("failed to create config directory %s: %w", ConfigDir(), err)
+	}
+	if err := os.WriteFile(ConfigFilePath(), data, 0o600); err != nil {
+		return nil, fmt.Errorf("failed to write config to %s: %w", ConfigFilePath(), err)
+	}
+	return next, nil
+}
+
+func readRawConfig() (map[string]json.RawMessage, error) {
+	raw := map[string]json.RawMessage{}
+	path := ConfigFilePath()
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return raw, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to read config file at %s: %w", path, err)
+	}
+	if len(strings.TrimSpace(string(data))) == 0 {
+		return raw, nil
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("failed to parse config JSON at %s: %w", path, err)
+	}
+	return raw, nil
+}
+
+func decodeProxies(raw map[string]json.RawMessage) ([]string, error) {
+	var proxies []string
+	if v, ok := raw["proxies"]; ok {
+		if err := json.Unmarshal(v, &proxies); err != nil {
+			return nil, fmt.Errorf("invalid \"proxies\" in config: %w", err)
+		}
+	}
+	return proxies, nil
+}
+
 // ParseBool parses string representations of boolean values.
 // Recognizes truthy values: "1", "t", "true", "yes", "y", "on" (case-insensitive).
 // Recognizes falsy values: "0", "f", "false", "no", "n", "off" (case-insensitive).

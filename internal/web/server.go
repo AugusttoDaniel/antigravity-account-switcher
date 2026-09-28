@@ -192,6 +192,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.api.HandleAccounts(w, r)
 		return
 	}
+	if path == "/api/proxies" || strings.HasPrefix(path, "/api/proxies/") {
+		s.api.HandleProxies(w, r)
+		return
+	}
 	if path == "/api/config" {
 		s.api.HandleConfig(w, r)
 		return

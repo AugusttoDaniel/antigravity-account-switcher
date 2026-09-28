@@ -118,6 +118,8 @@
 
     // Reapply log filtering to refresh blurred spans
     reapplyLogFilter();
+    // The pool list names the accounts using each proxy.
+    renderPoolList();
   }
 
   function togglePrivacyMode() {
@@ -419,6 +421,8 @@
     form: document.getElementById('proxy-dialog-form'),
     account: document.getElementById('proxy-dialog-account'),
     current: document.getElementById('proxy-dialog-current'),
+    poolWrap: document.getElementById('proxy-dialog-pool'),
+    poolSelect: document.getElementById('proxy-dialog-pool-select'),
     input: document.getElementById('proxy-dialog-input'),
     error: document.getElementById('proxy-dialog-error'),
     save: document.getElementById('proxy-dialog-save'),
@@ -434,12 +438,37 @@
     proxyDialog.input.setAttribute('aria-invalid', message ? 'true' : 'false');
   }
 
+  // Save needs either a typed URL or a pool pick.
+  function proxyDialogHasChoice() {
+    return proxyDialog.input.value.trim() !== '' || proxyDialog.poolSelect.value !== '';
+  }
+
   function setProxyDialogBusy(busy) {
     proxyDialog.busy = busy;
-    proxyDialog.save.disabled = busy || proxyDialog.input.value.trim() === '';
+    proxyDialog.save.disabled = busy || !proxyDialogHasChoice();
     proxyDialog.remove.disabled = busy;
     proxyDialog.cancel.disabled = busy;
     proxyDialog.input.disabled = busy;
+    proxyDialog.poolSelect.disabled = busy;
+  }
+
+  // Offers the pool's free proxies (masked; the account is bound by pool ID, so the credentials
+  // never pass through the browser).
+  async function fillProxyDialogPool() {
+    proxyDialog.poolWrap.hidden = true;
+    proxyDialog.poolSelect.innerHTML = '';
+    try {
+      const res = await fetch('/api/proxies');
+      if (!res.ok) return;
+      const data = await res.json();
+      const free = (data.proxies || []).filter(p => !p.used_by && !p.invalid);
+      if (free.length === 0 || !proxyDialog.el.open) return;
+      proxyDialog.poolSelect.innerHTML = '<option value="">— none —</option>' +
+        free.map(p => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.proxy)}</option>`).join('');
+      proxyDialog.poolWrap.hidden = false;
+    } catch (_) {
+      // The pool is optional here; typing a URL still works.
+    }
   }
 
   function openProxyDialog(acc) {
@@ -456,9 +485,10 @@
     setProxyDialogBusy(false);
     proxyDialog.el.showModal();
     proxyDialog.input.focus();
+    fillProxyDialogPool();
   }
 
-  async function submitProxy(proxyURL) {
+  async function submitProxy(payload, successMessage) {
     const acc = proxyDialog.acc;
     if (!acc || proxyDialog.busy) return;
     setProxyDialogError('');
@@ -467,7 +497,7 @@
       const res = await fetch(`/api/accounts/${encodeURIComponent(acc.id)}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ proxy_url: proxyURL })
+        body: JSON.stringify(payload)
       });
       if (!res.ok) {
         // Keep the dialog open so the value can be corrected in place.
@@ -475,8 +505,9 @@
         return;
       }
       proxyDialog.el.close();
-      showToast(proxyURL ? 'Outbound proxy updated' : 'Proxy removed — account now connects directly', 'success', 2500);
+      showToast(successMessage, 'success', 2500);
       fetchAccounts();
+      loadProxyPool();
     } catch (err) {
       setProxyDialogError(`Network error: ${err.message}`);
     } finally {
@@ -493,20 +524,301 @@
   if (proxyDialog.el) {
     proxyDialog.input.addEventListener('input', () => {
       setProxyDialogError('');
-      proxyDialog.save.disabled = proxyDialog.busy || proxyDialog.input.value.trim() === '';
+      if (proxyDialog.input.value.trim() !== '') proxyDialog.poolSelect.value = '';
+      proxyDialog.save.disabled = proxyDialog.busy || !proxyDialogHasChoice();
+    });
+    proxyDialog.poolSelect.addEventListener('change', () => {
+      setProxyDialogError('');
+      if (proxyDialog.poolSelect.value !== '') proxyDialog.input.value = '';
+      proxyDialog.save.disabled = proxyDialog.busy || !proxyDialogHasChoice();
     });
     proxyDialog.form.addEventListener('submit', (e) => {
       e.preventDefault();
+      const poolID = proxyDialog.poolSelect.value;
       const value = proxyDialog.input.value.trim();
-      if (value) submitProxy(value);
+      if (poolID) submitProxy({ pool_id: poolID }, 'Pool proxy assigned');
+      else if (value) submitProxy({ proxy_url: value }, 'Outbound proxy updated');
     });
-    proxyDialog.remove.addEventListener('click', () => submitProxy(''));
+    proxyDialog.remove.addEventListener('click', () => submitProxy({ proxy_url: '' }, 'Proxy removed — account now connects directly'));
     proxyDialog.cancel.addEventListener('click', () => proxyDialog.el.close());
     // Never leave a typed credential sitting in the DOM after the dialog closes.
     proxyDialog.el.addEventListener('close', () => {
       proxyDialog.input.value = '';
+      proxyDialog.poolSelect.innerHTML = '';
+      proxyDialog.poolWrap.hidden = true;
       proxyDialog.acc = null;
       setProxyDialogError('');
+    });
+  }
+
+  // =========================================================================
+  // Proxy Pool: bulk import with live validation
+  // =========================================================================
+
+  const OMNIROUTE_URL_KEY = 'antigravity_omniroute_url';
+  const OMNIROUTE_REGION_KEY = 'antigravity_omniroute_region';
+
+  const pool = {
+    input: document.getElementById('pool-input'),
+    file: document.getElementById('pool-file'),
+    checkBtn: document.getElementById('btn-pool-check'),
+    results: document.getElementById('pool-results'),
+    summary: document.getElementById('pool-summary'),
+    body: document.getElementById('pool-results-body'),
+    selectAll: document.getElementById('pool-select-all'),
+    sendOmni: document.getElementById('pool-send-omniroute'),
+    omniFields: document.getElementById('pool-omniroute-fields'),
+    omniURL: document.getElementById('pool-omniroute-url'),
+    omniToken: document.getElementById('pool-omniroute-token'),
+    omniRegion: document.getElementById('pool-omniroute-region'),
+    importBtn: document.getElementById('btn-pool-import'),
+    importMsg: document.getElementById('pool-import-msg'),
+    list: document.getElementById('pool-list'),
+    badge: document.getElementById('pool-count-badge'),
+    checkedText: null, // the exact text the current results belong to; an import re-sends it
+    entries: [],
+    busy: false,
+  };
+
+  const POOL_STATUS_LABEL = { ok: 'Working', failed: 'Failed', invalid: 'Invalid', duplicate: 'Duplicate' };
+
+  function poolSelectedLines() {
+    return [...pool.body.querySelectorAll('input[type="checkbox"]:checked')].map(cb => Number(cb.dataset.line));
+  }
+
+  function updatePoolImportState() {
+    const n = poolSelectedLines().length;
+    pool.importBtn.disabled = pool.busy || n === 0;
+    pool.importBtn.textContent = n > 0 ? `Import ${n} selected` : 'Import selected';
+    const boxes = [...pool.body.querySelectorAll('input[type="checkbox"]')];
+    pool.selectAll.checked = boxes.length > 0 && boxes.every(cb => cb.checked);
+    pool.selectAll.disabled = boxes.length === 0;
+  }
+
+  // Results are only valid for the text they were computed from.
+  function clearPoolResults() {
+    pool.checkedText = null;
+    pool.results.hidden = true;
+    pool.body.innerHTML = '';
+    pool.importMsg.textContent = '';
+  }
+
+  function renderPoolResults(data) {
+    const s = data.summary || {};
+    const parts = [`${s.total || 0} line(s)`];
+    for (const key of ['ok', 'failed', 'invalid', 'duplicate']) {
+      if (s[key]) parts.push(`${s[key]} ${POOL_STATUS_LABEL[key].toLowerCase()}`);
+    }
+    pool.summary.textContent = parts.join(' · ');
+
+    pool.body.innerHTML = (data.results || []).map(r => {
+      const importable = r.status === 'ok';
+      const notes = [];
+      if (r.in_pool) notes.push('already in the pool');
+      if (r.note) notes.push(r.note);
+      return `
+        <tr>
+          <td>${importable ? `<input type="checkbox" data-line="${r.line}" ${r.in_pool ? '' : 'checked'} aria-label="Import line ${r.line}">` : ''}</td>
+          <td class="num">${r.line}</td>
+          <td class="proxy-cell">${r.proxy ? escapeHtml(r.proxy) : '—'}${notes.length ? `<span class="pool-note">${escapeHtml(notes.join(' · '))}</span>` : ''}</td>
+          <td><span class="pool-status pool-status-${escapeHtml(r.status)}">${escapeHtml(POOL_STATUS_LABEL[r.status] || r.status)}</span>${r.error ? `<span class="pool-error">${escapeHtml(r.error)}</span>` : ''}</td>
+          <td class="num mono">${r.exit_ip ? escapeHtml(r.exit_ip) : '—'}</td>
+          <td class="num">${r.latency_ms ? `${r.latency_ms} ms` : '—'}</td>
+        </tr>`;
+    }).join('');
+    pool.results.hidden = false;
+    updatePoolImportState();
+  }
+
+  async function checkPool() {
+    const text = pool.input.value;
+    if (!text.trim() || pool.busy) return;
+    pool.busy = true;
+    pool.checkBtn.disabled = true;
+    pool.checkBtn.textContent = 'Testing proxies…';
+    clearPoolResults();
+    try {
+      const res = await fetch('/api/proxies/check', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text })
+      });
+      if (!res.ok) {
+        showToast(`Validation failed: ${await apiErrorMessage(res)}`, 'error', 5000);
+        return;
+      }
+      pool.checkedText = text;
+      renderPoolResults(await res.json());
+    } catch (err) {
+      showToast(`Validation failed: ${err.message}`, 'error', 5000);
+    } finally {
+      pool.busy = false;
+      pool.checkBtn.disabled = !pool.input.value.trim();
+      pool.checkBtn.textContent = 'Validate';
+      updatePoolImportState();
+    }
+  }
+
+  async function importPool() {
+    const lines = poolSelectedLines();
+    if (lines.length === 0 || pool.busy || pool.checkedText === null) return;
+    const payload = { text: pool.checkedText, lines };
+    if (pool.sendOmni.checked) {
+      payload.omniroute = {
+        url: pool.omniURL.value.trim(),
+        token: pool.omniToken.value.trim(),
+        region: pool.omniRegion.value.trim(),
+      };
+      if (!payload.omniroute.url || !payload.omniroute.token) {
+        pool.importMsg.textContent = 'Fill in the OmniRoute URL and token, or untick "Also send to OmniRoute".';
+        return;
+      }
+      try {
+        localStorage.setItem(OMNIROUTE_URL_KEY, payload.omniroute.url);
+        localStorage.setItem(OMNIROUTE_REGION_KEY, payload.omniroute.region);
+      } catch (_) {}
+    }
+
+    pool.busy = true;
+    updatePoolImportState();
+    pool.importBtn.textContent = 'Importing…';
+    pool.importMsg.textContent = '';
+    try {
+      const res = await fetch('/api/proxies/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) {
+        pool.importMsg.textContent = await apiErrorMessage(res);
+        return;
+      }
+      const data = await res.json();
+      const msg = [`Added ${data.added} to the pool` + (data.already_in_pool ? ` (${data.already_in_pool} already there)` : '') + '.'];
+      if (data.omniroute) {
+        msg.push(`OmniRoute: ${data.omniroute.ok} sent` + (data.omniroute.failed ? `, ${data.omniroute.failed} failed` : '') + '.');
+        for (const e of data.omniroute.errors || []) msg.push(`Line ${e.line}: ${e.error}`);
+      }
+      pool.importMsg.textContent = msg.join(' ');
+      showToast(`Proxy pool: ${data.added} added`, 'success', 3000);
+      loadProxyPool();
+    } catch (err) {
+      pool.importMsg.textContent = `Import failed: ${err.message}`;
+    } finally {
+      pool.busy = false;
+      // The token is single-use by design: never keep it around after an import attempt.
+      pool.omniToken.value = '';
+      updatePoolImportState();
+    }
+  }
+
+  function renderPoolList() {
+    if (!pool.list) return;
+    const entries = pool.entries;
+    const free = entries.filter(e => !e.used_by && !e.invalid).length;
+    pool.badge.textContent = `${entries.length} ${entries.length === 1 ? 'proxy' : 'proxies'} · ${free} free`;
+    if (entries.length === 0) {
+      pool.list.innerHTML = '<li class="pool-empty">Empty. Validate and import a list above.</li>';
+      return;
+    }
+    pool.list.innerHTML = entries.map(e => {
+      const usage = e.invalid ? 'invalid URL, never assigned'
+        : e.used_by ? `in use by ${isPrivacyMode ? '[redacted]' : escapeHtml(e.used_by)}`
+        : 'free';
+      return `
+        <li>
+          <span class="pool-proxy${e.invalid ? ' is-invalid' : ''}">${e.invalid ? '⚠️ hidden (invalid)' : escapeHtml(e.proxy)}</span>
+          <span class="pool-usage${!e.used_by && !e.invalid ? ' is-free' : ''}">${usage}</span>
+          <button class="btn btn-xs btn-danger-subtle btn-pool-remove" data-id="${escapeHtml(e.id)}">Remove</button>
+        </li>`;
+    }).join('');
+  }
+
+  async function loadProxyPool() {
+    if (!pool.list) return;
+    try {
+      const res = await fetch('/api/proxies');
+      if (!res.ok) return;
+      pool.entries = (await res.json()).proxies || [];
+      renderPoolList();
+    } catch (_) {}
+  }
+
+  async function removePoolEntry(btn) {
+    // Two-step: the first click arms the button, a second click within 3s removes.
+    if (btn.dataset.armed !== 'true') {
+      btn.dataset.armed = 'true';
+      btn.textContent = 'Confirm remove';
+      btn.classList.add('btn-danger-confirm');
+      setTimeout(() => {
+        if (!btn.isConnected) return;
+        btn.dataset.armed = 'false';
+        btn.textContent = 'Remove';
+        btn.classList.remove('btn-danger-confirm');
+      }, 3000);
+      return;
+    }
+    btn.disabled = true;
+    try {
+      const res = await fetch(`/api/proxies/${encodeURIComponent(btn.dataset.id)}`, { method: 'DELETE' });
+      if (!res.ok) {
+        showToast(`Could not remove: ${await apiErrorMessage(res)}`, 'error', 4000);
+        return;
+      }
+      showToast('Removed from the pool (accounts already using it keep it)', 'success', 3000);
+      loadProxyPool();
+    } catch (err) {
+      showToast(`Could not remove: ${err.message}`, 'error', 4000);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  function readPoolFile(file) {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      pool.input.value = String(reader.result || '');
+      pool.input.dispatchEvent(new Event('input'));
+    };
+    reader.readAsText(file); // honours a UTF-16 BOM (PowerShell ">" output)
+  }
+
+  if (pool.input) {
+    try {
+      pool.omniURL.value = localStorage.getItem(OMNIROUTE_URL_KEY) || '';
+      pool.omniRegion.value = localStorage.getItem(OMNIROUTE_REGION_KEY) || '';
+    } catch (_) {}
+
+    pool.input.addEventListener('input', () => {
+      pool.checkBtn.disabled = pool.busy || !pool.input.value.trim();
+      if (pool.checkedText !== null && pool.input.value !== pool.checkedText) clearPoolResults();
+    });
+    pool.checkBtn.addEventListener('click', checkPool);
+    pool.file.addEventListener('change', () => {
+      readPoolFile(pool.file.files[0]);
+      pool.file.value = '';
+    });
+    pool.input.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      pool.input.classList.add('is-dragover');
+    });
+    pool.input.addEventListener('dragleave', () => pool.input.classList.remove('is-dragover'));
+    pool.input.addEventListener('drop', (e) => {
+      e.preventDefault();
+      pool.input.classList.remove('is-dragover');
+      readPoolFile(e.dataTransfer.files[0]);
+    });
+    pool.body.addEventListener('change', updatePoolImportState);
+    pool.selectAll.addEventListener('change', () => {
+      pool.body.querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.checked = pool.selectAll.checked; });
+      updatePoolImportState();
+    });
+    pool.sendOmni.addEventListener('change', () => { pool.omniFields.hidden = !pool.sendOmni.checked; });
+    pool.importBtn.addEventListener('click', importPool);
+    pool.list.addEventListener('click', (e) => {
+      const btn = e.target.closest('.btn-pool-remove');
+      if (btn) removePoolEntry(btn);
     });
   }
 
@@ -1721,6 +2033,7 @@
     initListeners();
     fetchStatus();
     fetchAccounts();
+    loadProxyPool();
     fetchMetrics();
     fetchConfig();
     fetchModels();

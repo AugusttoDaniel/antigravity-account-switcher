@@ -16,6 +16,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -205,6 +206,51 @@ func (c *Client) AssignConnectionProxy(ctx context.Context, connectionID string,
 		"proxy": proxy,
 	}
 	return c.do(ctx, http.MethodPut, "/api/settings/proxy", body, nil)
+}
+
+// RegistryProxy is one entry for OmniRoute's proxy registry.
+type RegistryProxy struct {
+	Name     string `json:"name"`
+	Type     string `json:"type"`
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
+	Username string `json:"username,omitempty"`
+	Password string `json:"password,omitempty"`
+	Region   string `json:"region,omitempty"`
+}
+
+// RegistryProxyFromURL maps a validated proxy URL onto a registry entry. Names follow the
+// "ws-<host>" convention of the existing import script; OmniRoute upserts by host and port.
+func RegistryProxyFromURL(u *url.URL, region string) (RegistryProxy, error) {
+	port, err := strconv.Atoi(u.Port())
+	if err != nil {
+		return RegistryProxy{}, fmt.Errorf("omniroute: proxy needs an explicit port")
+	}
+	typ := u.Scheme
+	if typ == "socks5h" {
+		typ = "socks5"
+	}
+	p := RegistryProxy{Name: "ws-" + u.Hostname(), Type: typ, Host: u.Hostname(), Port: port, Region: strings.TrimSpace(region)}
+	if u.User != nil {
+		p.Username = u.User.Username()
+		p.Password, _ = u.User.Password()
+	}
+	return p, nil
+}
+
+// CreateProxy registers a proxy in OmniRoute's registry (POST /api/v1/management/proxies). The
+// token needs management scope. Re-sending the same host and port updates the existing entry.
+func (c *Client) CreateProxy(ctx context.Context, p RegistryProxy) error {
+	err := c.do(ctx, http.MethodPost, "/api/v1/management/proxies", p, nil)
+	if err == nil {
+		return nil
+	}
+	// do() quotes the response body, which may echo the payload back: never surface the secret.
+	msg := err.Error()
+	if p.Password != "" {
+		msg = strings.ReplaceAll(msg, p.Password, "***")
+	}
+	return errors.New(msg)
 }
 
 func (c *Client) do(ctx context.Context, method, path string, body, out any) error {
