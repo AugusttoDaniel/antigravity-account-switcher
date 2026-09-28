@@ -34,6 +34,10 @@ type Config struct {
 	ModelPrimary             string `json:"model_primary"`
 	ModelSecondary           string `json:"model_secondary"`
 	FallbackSecondaryEnabled bool   `json:"fallback_secondary_enabled"`
+	// Proxies is a static pool of outbound proxy URLs (scheme://user:pass@host:port) that new
+	// accounts draw from during ADS Power onboarding. A proxy is considered "used" once it is
+	// bound to any account, so each new account gets a never-used proxy from this list.
+	Proxies []string `json:"proxies,omitempty"`
 }
 
 // ConfigDir returns the default configuration directory (~/.config/antigravity-account-switcher).

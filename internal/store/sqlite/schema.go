@@ -98,6 +98,13 @@ CREATE INDEX IF NOT EXISTS idx_proxy_events_created_at ON proxy_events(created_a
 ALTER TABLE accounts ADD COLUMN proxy_url TEXT NOT NULL DEFAULT '';
 `,
 	},
+	{
+		Version:     3,
+		Description: "add_account_adspower_profile_id",
+		SQL: `
+ALTER TABLE accounts ADD COLUMN adspower_profile_id TEXT NOT NULL DEFAULT '';
+`,
+	},
 }
 
 // Migrate applies all pending schema migrations to the database.
