@@ -1880,23 +1880,182 @@
     }
   }
 
-  async function handleAddAccount() {
-    const btn = document.getElementById('btn-add-account');
-    if (btn) btn.disabled = true;
+  // =========================================================================
+  // Add a Google account (native <dialog>)
+  // =========================================================================
+
+  const oauthDialog = {
+    el: document.getElementById('oauth-dialog'),
+    form: document.getElementById('oauth-dialog-form'),
+    poolWrap: document.getElementById('oauth-dialog-pool'),
+    poolSelect: document.getElementById('oauth-dialog-pool-select'),
+    input: document.getElementById('oauth-dialog-input'),
+    openBrowser: document.getElementById('oauth-dialog-open'),
+    error: document.getElementById('oauth-dialog-error'),
+    link: document.getElementById('oauth-dialog-link'),
+    url: document.getElementById('oauth-dialog-url'),
+    copy: document.getElementById('oauth-dialog-copy'),
+    status: document.getElementById('oauth-dialog-status'),
+    start: document.getElementById('oauth-dialog-start'),
+    close: document.getElementById('oauth-dialog-close'),
+    pollTimer: null,
+    busy: false,
+  };
+
+  function oauthDialogHasProxy() {
+    return oauthDialog.input.value.trim() !== '' || oauthDialog.poolSelect.value !== '';
+  }
+
+  function updateOAuthDialogState() {
+    oauthDialog.start.disabled = oauthDialog.busy || !oauthDialogHasProxy();
+  }
+
+  function setOAuthDialogError(message) {
+    oauthDialog.error.textContent = message || '';
+    oauthDialog.error.hidden = !message;
+  }
+
+  function stopOAuthPolling() {
+    if (oauthDialog.pollTimer) clearInterval(oauthDialog.pollTimer);
+    oauthDialog.pollTimer = null;
+  }
+
+  async function fillOAuthDialogPool() {
+    oauthDialog.poolWrap.hidden = true;
+    oauthDialog.poolSelect.innerHTML = '';
+    try {
+      const res = await fetch('/api/proxies');
+      if (!res.ok) return;
+      const free = ((await res.json()).proxies || []).filter(p => !p.used_by && !p.invalid);
+      if (free.length === 0 || !oauthDialog.el.open) return;
+      oauthDialog.poolSelect.innerHTML = '<option value="">— none —</option>' +
+        free.map(p => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.proxy)}</option>`).join('');
+      oauthDialog.poolWrap.hidden = false;
+    } catch (_) {
+      // The pool is optional here; typing a proxy URL still works.
+    }
+  }
+
+  // Opens the dialog: the sign-in cannot start without a proxy.
+  function handleAddAccount() {
+    if (!oauthDialog.el) return;
+    stopOAuthPolling();
+    oauthDialog.input.value = '';
+    oauthDialog.openBrowser.checked = false;
+    oauthDialog.link.hidden = true;
+    oauthDialog.url.value = '';
+    oauthDialog.busy = false;
+    oauthDialog.input.disabled = false;
+    oauthDialog.poolSelect.disabled = false;
+    oauthDialog.start.textContent = 'Start sign-in';
+    setOAuthDialogError('');
+    updateOAuthDialogState();
+    oauthDialog.el.showModal();
+    oauthDialog.input.focus();
+    fillOAuthDialogPool();
+  }
+
+  // After the link is shown, watch for the account to appear (or its proxy to change, for a
+  // re-authentication) for as long as the sign-in flow itself stays valid.
+  async function watchForNewAccount() {
+    const snapshot = async () => {
+      const res = await fetch('/api/accounts');
+      if (!res.ok) return null;
+      return new Map((await res.json()).map(a => [a.id, a.proxy_url || '']));
+    };
+    const before = await snapshot().catch(() => null);
+    if (!before) return;
+    const deadline = Date.now() + 5 * 60 * 1000;
+    oauthDialog.pollTimer = setInterval(async () => {
+      if (Date.now() > deadline) {
+        stopOAuthPolling();
+        oauthDialog.status.textContent = 'The sign-in was not completed in time. Check the event log below, then start again.';
+        return;
+      }
+      const now = await snapshot().catch(() => null);
+      if (!now) return;
+      for (const [id, proxy] of now) {
+        if (!before.has(id) || before.get(id) !== proxy) {
+          stopOAuthPolling();
+          oauthDialog.el.close();
+          showToast('Account added through its proxy', 'success', 4000);
+          fetchAccounts();
+          fetchStatus();
+          loadProxyPool();
+          return;
+        }
+      }
+    }, 3000);
+  }
+
+  async function submitOAuthStart() {
+    if (oauthDialog.busy || !oauthDialogHasProxy()) return;
+    setOAuthDialogError('');
+    oauthDialog.busy = true;
+    oauthDialog.input.disabled = true;
+    oauthDialog.poolSelect.disabled = true;
+    updateOAuthDialogState();
+
+    const poolID = oauthDialog.poolSelect.value;
+    const payload = { open_browser: oauthDialog.openBrowser.checked };
+    if (poolID) payload.pool_id = poolID;
+    else payload.proxy_url = oauthDialog.input.value.trim();
 
     try {
-      const res = await fetch('/oauth/start', { method: 'POST' });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        showToast('OAuth flow initiated. Complete Google sign-in in your browser window.', 'info', 6000);
-      } else {
-        showToast(data.error?.message || 'Failed to initiate OAuth authorization', 'error');
+      const res = await fetch('/oauth/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) {
+        setOAuthDialogError(await apiErrorMessage(res));
+        oauthDialog.busy = false;
+        oauthDialog.input.disabled = false;
+        oauthDialog.poolSelect.disabled = false;
+        updateOAuthDialogState();
+        return;
       }
-    } catch (e) {
-      showToast(`Error initiating OAuth flow: ${e.message}`, 'error');
-    } finally {
-      if (btn) setTimeout(() => { btn.disabled = false; }, 1000);
+      const data = await res.json();
+      oauthDialog.url.value = data.auth_url || '';
+      oauthDialog.link.hidden = false;
+      oauthDialog.start.textContent = 'Started';
+      oauthDialog.status.textContent = data.auth_url
+        ? `Waiting for the sign-in (proxy ${data.proxy})…`
+        : 'The sign-in started, but the link is not ready yet. Check the event log below.';
+      watchForNewAccount();
+    } catch (err) {
+      setOAuthDialogError(`Could not start the sign-in: ${err.message}`);
+      oauthDialog.busy = false;
+      oauthDialog.input.disabled = false;
+      oauthDialog.poolSelect.disabled = false;
+      updateOAuthDialogState();
     }
+  }
+
+  if (oauthDialog.el) {
+    oauthDialog.input.addEventListener('input', () => {
+      setOAuthDialogError('');
+      if (oauthDialog.input.value.trim() !== '') oauthDialog.poolSelect.value = '';
+      updateOAuthDialogState();
+    });
+    oauthDialog.poolSelect.addEventListener('change', () => {
+      setOAuthDialogError('');
+      if (oauthDialog.poolSelect.value !== '') oauthDialog.input.value = '';
+      updateOAuthDialogState();
+    });
+    oauthDialog.form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      submitOAuthStart();
+    });
+    oauthDialog.copy.addEventListener('click', () => copyToClipboard(oauthDialog.url.value, 'Sign-in link'));
+    oauthDialog.close.addEventListener('click', () => oauthDialog.el.close());
+    oauthDialog.el.addEventListener('close', () => {
+      stopOAuthPolling();
+      oauthDialog.input.value = ''; // never leave a typed proxy credential in the DOM
+      oauthDialog.poolSelect.innerHTML = '';
+      oauthDialog.url.value = '';
+      setOAuthDialogError('');
+    });
   }
 
   // =========================================================================

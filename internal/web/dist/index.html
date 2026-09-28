@@ -471,6 +471,38 @@
     </form>
   </dialog>
 
+  <!-- Add a Google account. The sign-in and token exchange go through the account's own proxy, and
+       the sign-in link is shown instead of opened: this computer's default browser would reach
+       Google from the real IP. -->
+  <dialog id="oauth-dialog" class="proxy-dialog" aria-labelledby="oauth-dialog-title">
+    <form id="oauth-dialog-form" method="dialog" novalidate>
+      <h2 id="oauth-dialog-title" class="proxy-dialog-title">Add a Google account</h2>
+      <p class="proxy-dialog-current">The account signs in through its own proxy, which is saved on it. Open the sign-in link in a browser profile that uses the <strong>same proxy</strong>, so Google never sees your real IP.</p>
+      <div id="oauth-dialog-pool" class="proxy-dialog-pool" hidden>
+        <label for="oauth-dialog-pool-select" class="proxy-dialog-label">Proxy from the pool</label>
+        <select id="oauth-dialog-pool-select" class="form-select mono"></select>
+        <p class="proxy-dialog-or">or type a proxy URL</p>
+      </div>
+      <label for="oauth-dialog-input" class="proxy-dialog-label">Proxy URL</label>
+      <input id="oauth-dialog-input" class="proxy-dialog-input mono" type="text" autocomplete="off" spellcheck="false" placeholder="http://user:pass@host:port">
+      <label class="pool-check-label proxy-dialog-open"><input type="checkbox" id="oauth-dialog-open"> Also open the sign-in in this computer's default browser <em>(Google will see your real IP)</em></label>
+      <p id="oauth-dialog-error" class="proxy-dialog-error" role="alert" hidden></p>
+      <div id="oauth-dialog-link" class="oauth-dialog-link" hidden>
+        <label for="oauth-dialog-url" class="proxy-dialog-label">Sign-in link: open it in the profile that uses this proxy</label>
+        <div class="oauth-dialog-url-row">
+          <input id="oauth-dialog-url" class="text-input mono" type="text" readonly>
+          <button type="button" id="oauth-dialog-copy" class="btn btn-secondary">Copy link</button>
+        </div>
+        <p id="oauth-dialog-status" class="proxy-dialog-hint" aria-live="polite"></p>
+      </div>
+      <div class="proxy-dialog-actions">
+        <span class="proxy-dialog-spacer"></span>
+        <button type="button" id="oauth-dialog-close" class="btn btn-secondary">Close</button>
+        <button type="submit" id="oauth-dialog-start" class="btn btn-primary" disabled>Start sign-in</button>
+      </div>
+    </form>
+  </dialog>
+
   <!-- Global Toast Notifications Container -->
   <div id="toast-container" class="toast-container" aria-live="assertive"></div>
 
