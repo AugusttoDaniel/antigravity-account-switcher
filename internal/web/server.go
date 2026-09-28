@@ -10,6 +10,7 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -154,6 +155,32 @@ func NewServer(
 
 // ServeHTTP routes incoming requests to API, Proxy, or Static UI assets.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// 0. Upstream Cloud Code proxy traffic is identified by host/path and legitimately carries
+	// a non-local Host header, so it is handled before the loopback/CSRF guard below.
+	if s.proxyHandler != nil && s.isProxyRequest(r) {
+		s.proxyHandler.ServeHTTP(w, r)
+		return
+	}
+
+	// 0b. Everything else is the local dashboard and its management API. When bound to a
+	// loopback address (the default), reject requests whose Host header is not itself a
+	// loopback name. This defends against DNS-rebinding, where a page on a malicious domain
+	// that resolves to 127.0.0.1 drives the local API from the victim's browser.
+	if s.loopbackBound() && !isLocalHostHeader(r.Host) {
+		http.Error(w, "forbidden: non-local Host header", http.StatusForbidden)
+		return
+	}
+
+	// 0c. CSRF: reject state-changing requests carrying a cross-origin Origin header. Same-origin
+	// browser requests either omit Origin or send a loopback origin; a cross-site attacker's
+	// Origin is its own domain.
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		if origin := r.Header.Get("Origin"); origin != "" && !isLocalOrigin(origin) {
+			http.Error(w, "forbidden: cross-origin request", http.StatusForbidden)
+			return
+		}
+	}
+
 	path := r.URL.Path
 
 	// 1. API Endpoints
@@ -190,14 +217,49 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 2. Cloud Code PA Reverse / Forward Proxy Interception
-	if s.proxyHandler != nil && s.isProxyRequest(r) {
-		s.proxyHandler.ServeHTTP(w, r)
-		return
-	}
-
-	// 3. Embedded Web Dashboard Static Files
+	// 2. Embedded Web Dashboard Static Files
 	s.serveStatic(w, r)
+}
+
+// loopbackBound reports whether the server is bound to a loopback address, in which case the
+// dashboard/API is intended to be reachable only from this machine.
+func (s *Server) loopbackBound() bool {
+	addr := strings.TrimSpace(s.cfg.BindAddr)
+	if addr == "" {
+		return true // default bind is 127.0.0.1
+	}
+	if ip := net.ParseIP(addr); ip != nil {
+		return ip.IsLoopback()
+	}
+	return addr == "localhost"
+}
+
+// isLocalHostHeader reports whether the request Host header refers to a loopback name.
+func isLocalHostHeader(host string) bool {
+	if host == "" {
+		return false
+	}
+	h := host
+	if hostname, _, err := net.SplitHostPort(host); err == nil {
+		h = hostname
+	}
+	h = strings.TrimSuffix(strings.TrimPrefix(h, "["), "]") // strip IPv6 brackets
+	if strings.EqualFold(h, "localhost") {
+		return true
+	}
+	if ip := net.ParseIP(h); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
+}
+
+// isLocalOrigin reports whether an Origin header points at a loopback host.
+func isLocalOrigin(origin string) bool {
+	u, err := url.Parse(origin)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	return isLocalHostHeader(u.Host)
 }
 
 func (s *Server) isProxyRequest(r *http.Request) bool {

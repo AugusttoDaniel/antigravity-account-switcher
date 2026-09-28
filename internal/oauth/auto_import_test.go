@@ -37,6 +37,9 @@ func TestAutoImportExistingAccount(t *testing.T) {
 
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
+	// os.UserHomeDir uses USERPROFILE on Windows and HOME elsewhere; set both so the
+	// test resolves the temp home regardless of platform.
+	t.Setenv("USERPROFILE", tmpHome)
 
 	acpDir := filepath.Join(tmpHome, ".gemini", "antigravity-acp")
 	if err := os.MkdirAll(acpDir, 0o755); err != nil {

@@ -59,9 +59,13 @@ jobs:
 
       - name: Set Release Metadata
         id: vars
+        env:
+          # Pass the user-controlled dispatch input through the environment instead of
+          # interpolating ${{ github.event.inputs.tag }} directly into the shell, which would
+          # allow shell command injection before the format check below could run.
+          INPUT_TAG: ${{ github.event.inputs.tag }}
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            INPUT_TAG="${{ github.event.inputs.tag }}"
             if [[ ! "$INPUT_TAG" =~ ^v[0-9] ]] || [[ "$INPUT_TAG" == *"/"* ]]; then
               echo "Error: manual tag must follow format 'v*' and not contain slashes (got '$INPUT_TAG')"
               exit 1

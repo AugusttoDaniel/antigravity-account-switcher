@@ -50,8 +50,8 @@ func TestOpen_FileDB_Pragmas(t *testing.T) {
 	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM schema_migrations").Scan(&count); err != nil {
 		t.Fatalf("query schema_migrations count: %v", err)
 	}
-	if count != 1 {
-		t.Errorf("expected 1 applied migration, got %d", count)
+	if count != len(sqlite.Migrations) {
+		t.Errorf("expected %d applied migrations, got %d", len(sqlite.Migrations), count)
 	}
 
 	// 5. Verify MaxOpenConns is 1

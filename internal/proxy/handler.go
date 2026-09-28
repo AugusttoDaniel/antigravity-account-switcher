@@ -796,9 +796,25 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 
-				// If thought signature error persists or cross-model error occurred, trigger failover/rotation
-				if isThoughtSigErr || currentModel != origModel {
+				if isThoughtSigErr {
+					// A thought-signature error that survived the sanitize attempt escalates to
+					// account rotation/failover below.
 					isExhausted = true
+				} else {
+					// Ordinary client error (malformed request, unknown model, etc.). This is not a
+					// quota problem: rotating accounts would not help and would needlessly burn the
+					// pool. Forward the response verbatim, including the body already buffered above.
+					defer resp.Body.Close()
+					copyResponseHeaders(w.Header(), resp.Header)
+					w.WriteHeader(resp.StatusCode)
+					if len(bodyBytes) > 0 {
+						_, _ = w.Write(bodyBytes)
+					}
+					_, _ = io.Copy(w, resp.Body)
+					if flusher, ok := w.(http.Flusher); ok {
+						flusher.Flush()
+					}
+					return
 				}
 			} else if resp.StatusCode == http.StatusForbidden {
 				bodyBytes, _ = io.ReadAll(io.LimitReader(resp.Body, 64*1024))

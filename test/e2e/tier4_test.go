@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -21,6 +22,9 @@ import (
 // 2. Global process environment (os.Getenv) remains completely unmutated.
 // 3. Child exit cleanly and immediately terminates the switcher server.
 func TestTier4_LauncherCoupledLifecycle_AndZeroEnvironmentPollution(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("spawns a `sh -c` child with scoped proxy env; POSIX-only")
+	}
 	// Baseline snapshot of global environment before wrap
 	baselineHTTP := os.Getenv("HTTP_PROXY")
 	baselineHTTPS := os.Getenv("HTTPS_PROXY")
@@ -80,6 +84,9 @@ func TestTier4_LauncherCoupledLifecycle_AndZeroEnvironmentPollution(t *testing.T
 
 // TestTier4_LauncherScriptExecution validates that scripts/launch-antigravity.sh works.
 func TestTier4_LauncherScriptExecution(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("executes a POSIX shell script (scripts/launch-antigravity.sh); POSIX-only")
+	}
 	scriptPath, err := filepath.Abs("../../scripts/launch-antigravity.sh")
 	if err != nil {
 		t.Fatalf("resolve script path: %v", err)

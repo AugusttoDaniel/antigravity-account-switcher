@@ -37,41 +37,75 @@ const (
 	DefaultHTTPTimeout = 15 * time.Second
 )
 
-// ResolveCredentials dynamically discovers Google OAuth credentials on the local machine:
-// 1. Environment variables: ANTIGRAVITY_CLIENT_ID and ANTIGRAVITY_CLIENT_SECRET
-// 2. Existing local Antigravity token files: ~/.gemini/antigravity-acp/acp_token.json
-// 3. Installed Antigravity 2.0 binary inspection (language_server, main.js)
+// ResolveCredentials returns the first discovered (client_id, client_secret) pair.
+// It is kept for backward compatibility; callers that need to disambiguate between
+// several candidates should use ResolveCredentialCandidates instead.
 func ResolveCredentials() (string, string) {
-	// 1. Environment variable override
+	ids, secrets := ResolveCredentialCandidates()
+	if len(ids) == 0 || len(secrets) == 0 {
+		return "", ""
+	}
+	return ids[0], secrets[0]
+}
+
+// ResolveCredentialCandidates discovers every plausible Google OAuth client_id and
+// client_secret on the local machine.
+//
+// The installed Antigravity binary embeds more than one client_id and more than one
+// client_secret, and their byte offsets do not reveal which secret belongs to which id.
+// Guessing a pairing (as earlier versions did) yields "invalid_client" at token exchange,
+// so all candidates are returned and the correct pair is probed against Google at runtime
+// (see OAuthService.ensureClientPair).
+//
+// Precedence, highest first:
+//  1. Environment variables ANTIGRAVITY_CLIENT_ID / ANTIGRAVITY_CLIENT_SECRET. When set,
+//     that dimension is authoritative and its candidate list is reduced to the env value.
+//  2. An existing Antigravity ACP token file.
+//  3. The installed Antigravity 2.0 binary/bundle.
+func ResolveCredentialCandidates() (ids []string, secrets []string) {
 	envID := os.Getenv("ANTIGRAVITY_CLIENT_ID")
 	envSec := os.Getenv("ANTIGRAVITY_CLIENT_SECRET")
-	if envID != "" && envSec != "" {
-		return envID, envSec
+
+	seenID := map[string]bool{}
+	seenSec := map[string]bool{}
+	addID := func(v string) {
+		if v != "" && !seenID[v] {
+			seenID[v] = true
+			ids = append(ids, v)
+		}
+	}
+	addSec := func(v string) {
+		if v != "" && !seenSec[v] {
+			seenSec[v] = true
+			secrets = append(secrets, v)
+		}
 	}
 
-	// 2. Existing local token file
+	addID(envID)
+	addSec(envSec)
+
 	if fileID, fileSec := discoverFromTokenFile(); fileID != "" && fileSec != "" {
-		if envID != "" {
-			return envID, fileSec
-		}
-		if envSec != "" {
-			return fileID, envSec
-		}
-		return fileID, fileSec
+		addID(fileID)
+		addSec(fileSec)
 	}
 
-	// 3. Installed Antigravity 2.0 binary bundle inspection
-	if bundleID, bundleSec := discoverFromIDEBundle(); bundleID != "" && bundleSec != "" {
-		if envID != "" {
-			return envID, bundleSec
-		}
-		if envSec != "" {
-			return bundleID, envSec
-		}
-		return bundleID, bundleSec
+	bundleIDs, bundleSecs := discoverFromIDEBundle()
+	for _, v := range bundleIDs {
+		addID(v)
+	}
+	for _, v := range bundleSecs {
+		addSec(v)
 	}
 
-	return envID, envSec
+	// A pinned environment value overrides everything else for its dimension.
+	if envID != "" {
+		ids = []string{envID}
+	}
+	if envSec != "" {
+		secrets = []string{envSec}
+	}
+
+	return ids, secrets
 }
 
 func discoverFromTokenFile() (string, string) {
@@ -90,7 +124,23 @@ func discoverFromTokenFile() (string, string) {
 	return "", ""
 }
 
-func discoverFromIDEBundle() (string, string) {
+var (
+	bundleScanOnce sync.Once
+	bundleScanIDs  []string
+	bundleScanSecs []string
+)
+
+// discoverFromIDEBundle returns all client_ids and client_secrets embedded in the
+// installed Antigravity bundle. The scan reads a large binary (hundreds of MB) and is
+// therefore memoized for the lifetime of the process.
+func discoverFromIDEBundle() ([]string, []string) {
+	bundleScanOnce.Do(func() {
+		bundleScanIDs, bundleScanSecs = scanBundleForCredentials()
+	})
+	return bundleScanIDs, bundleScanSecs
+}
+
+func scanBundleForCredentials() ([]string, []string) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		home = ""
@@ -123,20 +173,33 @@ func discoverFromIDEBundle() (string, string) {
 	prefix := string([]byte{0x47, 0x4f, 0x43, 0x53, 0x50, 0x58, 0x2d}) // native client secret prefix bytes ("GOCSPX-")
 	reSec := regexp.MustCompile(regexp.QuoteMeta(prefix) + `[A-Za-z0-9_-]{28}`)
 
+	var ids, secs []string
+	seenID := map[string]bool{}
+	seenSec := map[string]bool{}
+
 	for _, c := range candidates {
-		if data, err := os.ReadFile(c); err == nil {
-			allIDs := reID.FindAll(data, -1)
-			allSecs := reSec.FindAll(data, -1)
-			if len(allIDs) > 0 && len(allSecs) > 0 {
-				idx := 0
-				if len(allIDs) > 1 && len(allSecs) > 1 {
-					idx = 1
-				}
-				return string(allIDs[idx]), string(allSecs[idx])
+		data, err := os.ReadFile(c)
+		if err != nil {
+			continue
+		}
+		for _, m := range reID.FindAll(data, -1) {
+			if s := string(m); !seenID[s] {
+				seenID[s] = true
+				ids = append(ids, s)
 			}
 		}
+		for _, m := range reSec.FindAll(data, -1) {
+			if s := string(m); !seenSec[s] {
+				seenSec[s] = true
+				secs = append(secs, s)
+			}
+		}
+		// Stop at the first bundle that yields at least one id and one secret.
+		if len(ids) > 0 && len(secs) > 0 {
+			break
+		}
 	}
-	return "", ""
+	return ids, secs
 }
 
 // DefaultScopes defines the OAuth2 scopes required by Antigravity.
@@ -149,26 +212,48 @@ var DefaultScopes = []string{
 
 // Config holds configuration parameters for the OAuth2 subsystem.
 type Config struct {
-	ClientID     string
-	ClientSecret string
-	AuthURL      string
-	TokenURL     string
-	UserInfoURL  string
-	Scopes       []string
-	HTTPClient   *http.Client
-	StateTTL     time.Duration
-	FlowTimeout  time.Duration
+	ClientID         string
+	ClientSecret     string
+	IDCandidates     []string
+	SecretCandidates []string
+	AuthURL          string
+	TokenURL         string
+	UserInfoURL      string
+	Scopes           []string
+	HTTPClient       *http.Client
+	StateTTL         time.Duration
+	FlowTimeout      time.Duration
 }
 
 // Option modifies Config.
 type Option func(*Config)
 
+// WithClientID pins the client_id, reducing the candidate list to that single value.
 func WithClientID(id string) Option {
-	return func(c *Config) { c.ClientID = id }
+	return func(c *Config) {
+		c.ClientID = id
+		if id != "" {
+			c.IDCandidates = []string{id}
+		}
+	}
 }
 
+// WithClientSecret pins the client_secret, reducing the candidate list to that single value.
 func WithClientSecret(secret string) Option {
-	return func(c *Config) { c.ClientSecret = secret }
+	return func(c *Config) {
+		c.ClientSecret = secret
+		if secret != "" {
+			c.SecretCandidates = []string{secret}
+		}
+	}
+}
+
+// WithCredentialCandidates supplies explicit candidate lists to probe.
+func WithCredentialCandidates(ids, secrets []string) Option {
+	return func(c *Config) {
+		c.IDCandidates = ids
+		c.SecretCandidates = secrets
+	}
 }
 
 func WithAuthURL(url string) Option {
@@ -347,32 +432,57 @@ type OAuthService struct {
 	accountRepo domain.AccountRepository
 	stateStore  *StateStore
 	client      *http.Client
+
+	// idCandidates and secCandidates hold every client_id / client_secret discovered on the
+	// machine. The installed binary can embed more than one of each and their byte offsets do
+	// not reveal the correct pairing, so when more than one candidate exists the pairing is
+	// ambiguous and the user must pin it explicitly (see errAmbiguousCredentials).
+	idCandidates  []string
+	secCandidates []string
 }
 
 // NewOAuthService constructs a new OAuthService.
 func NewOAuthService(accountRepo domain.AccountRepository, opts ...Option) *OAuthService {
-	clientID, clientSecret := ResolveCredentials()
-
 	cfg := Config{
-		ClientID:     clientID,
-		ClientSecret: clientSecret,
-		AuthURL:      DefaultGoogleAuthURL,
-		TokenURL:     DefaultGoogleTokenURL,
-		UserInfoURL:  DefaultGoogleUserInfoURL,
-		Scopes:       DefaultScopes,
-		StateTTL:     DefaultStateTTL,
-		FlowTimeout:  DefaultFlowTimeout,
+		AuthURL:     DefaultGoogleAuthURL,
+		TokenURL:    DefaultGoogleTokenURL,
+		UserInfoURL: DefaultGoogleUserInfoURL,
+		Scopes:      DefaultScopes,
+		StateTTL:    DefaultStateTTL,
+		FlowTimeout: DefaultFlowTimeout,
 	}
 
 	for _, opt := range opts {
 		opt(&cfg)
 	}
 
-	if cfg.ClientID == "" && (strings.Contains(cfg.TokenURL, "127.0.0.1") || strings.Contains(cfg.TokenURL, "localhost") || strings.Contains(cfg.AuthURL, "127.0.0.1")) {
-		cfg.ClientID = "test-mock-client-id"
+	// Build the candidate lists: explicit options win, otherwise discover from the machine.
+	ids := cfg.IDCandidates
+	secs := cfg.SecretCandidates
+	if len(ids) == 0 || len(secs) == 0 {
+		discoveredIDs, discoveredSecs := ResolveCredentialCandidates()
+		if len(ids) == 0 {
+			ids = discoveredIDs
+		}
+		if len(secs) == 0 {
+			secs = discoveredSecs
+		}
 	}
-	if cfg.ClientSecret == "" && (strings.Contains(cfg.TokenURL, "127.0.0.1") || strings.Contains(cfg.TokenURL, "localhost") || strings.Contains(cfg.AuthURL, "127.0.0.1")) {
-		cfg.ClientSecret = "test-mock-client-secret"
+
+	// Mock fallback for local/loopback token endpoints used in tests.
+	isLocal := isLoopbackTokenEndpoint(cfg.TokenURL) || isLoopbackTokenEndpoint(cfg.AuthURL)
+	if len(ids) == 0 && isLocal {
+		ids = []string{"test-mock-client-id"}
+	}
+	if len(secs) == 0 && isLocal {
+		secs = []string{"test-mock-client-secret"}
+	}
+
+	if cfg.ClientID == "" && len(ids) > 0 {
+		cfg.ClientID = ids[0]
+	}
+	if cfg.ClientSecret == "" && len(secs) > 0 {
+		cfg.ClientSecret = secs[0]
 	}
 
 	client := cfg.HTTPClient
@@ -383,11 +493,30 @@ func NewOAuthService(accountRepo domain.AccountRepository, opts ...Option) *OAut
 	}
 
 	return &OAuthService{
-		cfg:         cfg,
-		accountRepo: accountRepo,
-		stateStore:  NewStateStore(cfg.StateTTL),
-		client:      client,
+		cfg:           cfg,
+		accountRepo:   accountRepo,
+		stateStore:    NewStateStore(cfg.StateTTL),
+		client:        client,
+		idCandidates:  ids,
+		secCandidates: secs,
 	}
+}
+
+func isLoopbackTokenEndpoint(u string) bool {
+	return strings.Contains(u, "127.0.0.1") || strings.Contains(u, "localhost") || strings.Contains(u, "[::1]")
+}
+
+// CredentialsAmbiguous reports whether more than one client_id or client_secret was
+// discovered, meaning the correct pairing cannot be determined automatically and the user
+// must pin it via ANTIGRAVITY_CLIENT_ID / ANTIGRAVITY_CLIENT_SECRET.
+func (s *OAuthService) CredentialsAmbiguous() bool {
+	return len(s.idCandidates) > 1 || len(s.secCandidates) > 1
+}
+
+// CredentialCandidateCounts returns how many distinct client_ids and client_secrets were
+// discovered, for diagnostics and user-facing guidance.
+func (s *OAuthService) CredentialCandidateCounts() (ids int, secrets int) {
+	return len(s.idCandidates), len(s.secCandidates)
 }
 
 // BuildAuthURL constructs the Google authorization URL with PKCE and CSRF state parameters.

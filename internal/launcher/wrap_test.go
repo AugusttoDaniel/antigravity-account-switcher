@@ -6,12 +6,24 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/store/sqlite"
 )
+
+// skipWithoutPOSIXShell skips tests that spawn a `sh -c` child and rely on Unix
+// process semantics. The wrapped functionality targets the Linux runtime; these
+// tests run on Linux/CI. Cross-platform behaviour is covered by TestBuildScopedEnv,
+// TestWrap_MissingCommandReturnsDescriptiveError and TestWrap_EmptyArgsError.
+func skipWithoutPOSIXShell(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("requires a POSIX shell and Unix process semantics")
+	}
+}
 
 func TestBuildScopedEnv(t *testing.T) {
 	baseEnv := []string{
@@ -69,6 +81,9 @@ func TestBuildScopedEnv(t *testing.T) {
 }
 
 func TestSetDeathSig(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Pdeathsig / SysProcAttr coupling is Linux-only")
+	}
 	cmd := exec.Command("true")
 	SetDeathSig(cmd)
 	if cmd.SysProcAttr == nil {
@@ -77,6 +92,7 @@ func TestSetDeathSig(t *testing.T) {
 }
 
 func TestWrap_EchoCommand_ZeroExit(t *testing.T) {
+	skipWithoutPOSIXShell(t)
 	db, err := sqlite.Open(":memory:")
 	if err != nil {
 		t.Fatalf("sqlite open: %v", err)
@@ -114,6 +130,7 @@ func TestWrap_EchoCommand_ZeroExit(t *testing.T) {
 }
 
 func TestWrap_ExitCodePropagation(t *testing.T) {
+	skipWithoutPOSIXShell(t)
 	db, err := sqlite.Open(":memory:")
 	if err != nil {
 		t.Fatalf("sqlite open: %v", err)
@@ -137,6 +154,7 @@ func TestWrap_ExitCodePropagation(t *testing.T) {
 }
 
 func TestWrap_ContextCancellation(t *testing.T) {
+	skipWithoutPOSIXShell(t)
 	db, err := sqlite.Open(":memory:")
 	if err != nil {
 		t.Fatalf("sqlite open: %v", err)
@@ -202,6 +220,7 @@ func TestWrap_EmptyArgsError(t *testing.T) {
 }
 
 func TestWrap_InjectsAppImageEnv(t *testing.T) {
+	skipWithoutPOSIXShell(t)
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 	db, err := sqlite.Open(dbPath)
 	if err != nil {
