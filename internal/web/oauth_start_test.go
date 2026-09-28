@@ -19,6 +19,9 @@ import (
 // account once the sign-in is "done".
 type fakeOAuthEngine struct {
 	repo domain.AccountRepository
+	// id is unique per test: setupTestWeb opens ":memory:", which is one database shared by every
+	// test in the process, so a flow left running by one test must not collide with the next.
+	id string
 
 	mu        sync.Mutex
 	proxies   []string // proxy passed to each StartLoopbackFlowWithProxy call
@@ -49,7 +52,7 @@ func (f *fakeOAuthEngine) StartLoopbackFlowWithProxy(ctx context.Context, opener
 		f.mu.Unlock()
 	}
 	now := time.Now().UTC()
-	acc := &domain.Account{ID: "new-acc", Email: "new@gmail.com", Status: domain.AccountStatusActive, CreatedAt: now, UpdatedAt: now}
+	acc := &domain.Account{ID: f.id, Email: f.id + "@gmail.com", Status: domain.AccountStatusActive, CreatedAt: now, UpdatedAt: now}
 	if err := f.repo.Create(ctx, acc); err != nil {
 		return nil, err
 	}
@@ -79,7 +82,7 @@ func (f *fakeOAuthEngine) snapshot() (proxies []string, openerNil []bool, direct
 func newOAuthTestServer(t *testing.T) (*Server, *fakeOAuthEngine, domain.AccountRepository) {
 	t.Helper()
 	_, accRepo, quotaRepo, _, metricsSvc, broadcaster, eventRepo := setupTestWeb(t)
-	engine := &fakeOAuthEngine{repo: accRepo}
+	engine := &fakeOAuthEngine{repo: accRepo, id: "acc-" + strings.NewReplacer("/", "-", " ", "-").Replace(t.Name())}
 	server, err := NewServer(accRepo, quotaRepo, metricsSvc, broadcaster, eventRepo, engine)
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
@@ -171,7 +174,7 @@ func TestOAuthStart_UsesTheProxyAndKeepsTheBrowserClosed(t *testing.T) {
 	}
 
 	// The account leaves the flow already bound to the proxy the exchange went through.
-	if got := waitForProxy(t, repo, "new-acc"); got != proxy {
+	if got := waitForProxy(t, repo, engine.id); got != proxy {
 		t.Errorf("account proxy = %q, want it saved after the flow", got)
 	}
 	proxies, openerNil, direct, openerRan := engine.snapshot()
@@ -187,10 +190,14 @@ func TestOAuthStart_UsesTheProxyAndKeepsTheBrowserClosed(t *testing.T) {
 }
 
 func TestOAuthStart_OpeningTheDefaultBrowserIsAnExplicitOptIn(t *testing.T) {
-	server, engine, _ := newOAuthTestServer(t)
+	server, engine, repo := newOAuthTestServer(t)
 	code, out, raw := startOAuth(t, server, http.MethodPost, map[string]any{"proxy_url": "http://proxy.example.com:3128", "open_browser": true})
 	if code != http.StatusOK || out["browser_opened"] != true {
 		t.Fatalf("start: %d %s", code, raw)
+	}
+	// Let the flow finish (its last step saves the proxy) so nothing outlives the test.
+	if got := waitForProxy(t, repo, engine.id); got == "" {
+		t.Error("the flow never saved the proxy")
 	}
 	if _, openerNil, _, _ := engine.snapshot(); len(openerNil) != 1 || !openerNil[0] {
 		t.Errorf("open_browser=true should hand the flow a nil opener (default browser), got %v", openerNil)
@@ -228,7 +235,7 @@ func TestOAuthStart_ResolvesAPoolProxyByID(t *testing.T) {
 	if strings.Contains(raw, "s3cretPW") {
 		t.Errorf("response leaks the pool proxy credentials: %s", raw)
 	}
-	if got := waitForProxy(t, repo, "new-acc"); got != proxy {
+	if got := waitForProxy(t, repo, engine.id); got != proxy {
 		t.Errorf("account proxy = %q, want the pool entry", got)
 	}
 	if proxies, _, _, _ := engine.snapshot(); len(proxies) != 1 || proxies[0] != proxy {
