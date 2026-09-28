@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/url"
@@ -72,11 +73,113 @@ type poolSync struct {
 
 // HandleOmniRoute serves the /api/omniroute routes.
 func (a *APIHandler) HandleOmniRoute(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path == "/api/omniroute/compare" && r.Method == http.MethodPost {
+	switch {
+	case r.URL.Path == "/api/omniroute/compare" && r.Method == http.MethodPost:
 		a.compareWithOmniRoute(w, r)
+	case r.URL.Path == "/api/omniroute/bind" && r.Method == http.MethodPost:
+		a.bindProxyInOmniRoute(w, r)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// listGoogleConnections lists the Google accounts OmniRoute keeps under its two providers: "agy"
+// (imported from here) and "antigravity" (its own Antigravity login).
+func listGoogleConnections(ctx context.Context, client *omniroute.Client) ([]omniroute.Connection, error) {
+	var conns []omniroute.Connection
+	for _, provider := range []string{"agy", "antigravity"} {
+		list, err := client.ListConnections(ctx, provider)
+		if err != nil {
+			return nil, err
+		}
+		conns = append(conns, list...)
+	}
+	return conns, nil
+}
+
+// indexConnectionsByEmail groups connections by lowercase email (or name, which OmniRoute sets to
+// the email on import). Every connection of an email is kept, so duplicates stay visible.
+func indexConnectionsByEmail(conns []omniroute.Connection) map[string][]omniroute.Connection {
+	byEmail := make(map[string][]omniroute.Connection, len(conns))
+	for _, c := range conns {
+		keys := map[string]bool{}
+		for _, key := range []string{c.Email, c.Name} {
+			if k := strings.ToLower(strings.TrimSpace(key)); k != "" && !keys[k] {
+				keys[k] = true
+				byEmail[k] = append(byEmail[k], c)
+			}
+		}
+	}
+	return byEmail
+}
+
+// bindProxyInOmniRoute makes an account's OmniRoute connection use the proxy the account has here.
+// The proxy is read from the stored account and sent server-side, so its credentials never pass
+// through the browser. It only writes when the two differ, and never removes a proxy.
+func (a *APIHandler) bindProxyInOmniRoute(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		omnirouteTarget
+		AccountID string `json:"account_id"`
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErrorJSON(w, http.StatusBadRequest, "invalid request payload", err)
 		return
 	}
-	http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	if err := validateOmniRouteURL(req.URL); err != nil {
+		writeErrorJSON(w, http.StatusBadRequest, "invalid OmniRoute URL", err)
+		return
+	}
+	if strings.TrimSpace(req.Token) == "" {
+		writeErrorJSON(w, http.StatusBadRequest, "missing OmniRoute token", errors.New("a management token is required"))
+		return
+	}
+
+	ctx := r.Context()
+	acc, err := a.accountRepo.GetByID(ctx, strings.TrimSpace(req.AccountID))
+	if err != nil || acc == nil {
+		writeErrorJSON(w, http.StatusNotFound, "account not found", errors.New("no account with that id"))
+		return
+	}
+	if strings.TrimSpace(acc.ProxyURL) == "" {
+		writeErrorJSON(w, http.StatusBadRequest, "this account has no proxy here", errors.New("set one first (Edit Proxy); binding never removes a proxy in OmniRoute"))
+		return
+	}
+	proxy, err := egress.ParseProxyURL(acc.ProxyURL)
+	if err != nil {
+		writeErrorJSON(w, http.StatusBadRequest, "this account's proxy is invalid", err)
+		return
+	}
+
+	client := omnirouteClient(&req.omnirouteTarget)
+	callCtx, cancel := context.WithTimeout(ctx, omnirouteCallTimeout)
+	defer cancel()
+	conns, err := listGoogleConnections(callCtx, client)
+	if err != nil {
+		writeErrorJSON(w, http.StatusBadGateway, "could not list OmniRoute accounts", err)
+		return
+	}
+	matches := indexConnectionsByEmail(conns)[strings.ToLower(strings.TrimSpace(acc.Email))]
+	switch len(matches) {
+	case 0:
+		writeErrorJSON(w, http.StatusNotFound, "account not in OmniRoute", errors.New("send it with export-omniroute first"))
+		return
+	case 1:
+	default:
+		writeErrorJSON(w, http.StatusConflict, "OmniRoute holds several connections for this account", fmt.Errorf("%d connections: remove the duplicate first so the proxy goes to the right one", len(matches)))
+		return
+	}
+
+	res, err := client.BindConnectionProxy(callCtx, matches[0].ID, proxy)
+	if err != nil {
+		writeErrorJSON(w, http.StatusBadGateway, "could not bind the proxy in OmniRoute", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"changed":       res.Changed,
+		"was":           res.Was,
+		"connection_id": matches[0].ID,
+	})
 }
 
 // endpointKey identifies a proxy endpoint as OmniRoute can report it: lowercase host and port.
@@ -130,16 +233,10 @@ func (a *APIHandler) compareWithOmniRoute(w http.ResponseWriter, r *http.Request
 	client := omnirouteClient(&target)
 	listCtx, cancel := context.WithTimeout(ctx, omnirouteCallTimeout)
 	defer cancel()
-	// OmniRoute keeps Google accounts under two providers: "agy" (imported from here) and
-	// "antigravity" (its own Antigravity login).
-	var conns []omniroute.Connection
-	for _, provider := range []string{"agy", "antigravity"} {
-		list, err := client.ListConnections(listCtx, provider)
-		if err != nil {
-			writeErrorJSON(w, http.StatusBadGateway, "could not list OmniRoute accounts", err)
-			return
-		}
-		conns = append(conns, list...)
+	conns, err := listGoogleConnections(listCtx, client)
+	if err != nil {
+		writeErrorJSON(w, http.StatusBadGateway, "could not list OmniRoute accounts", err)
+		return
 	}
 	registry, err := client.ListProxies(listCtx)
 	if err != nil {
@@ -148,18 +245,7 @@ func (a *APIHandler) compareWithOmniRoute(w http.ResponseWriter, r *http.Request
 	}
 
 	// Accounts: match by email (OmniRoute names imported accounts after their email too).
-	// Every connection of an email is kept, so duplicates are reported instead of being listed as
-	// unknown here.
-	byEmail := make(map[string][]omniroute.Connection, len(conns))
-	for _, c := range conns {
-		keys := map[string]bool{}
-		for _, key := range []string{c.Email, c.Name} {
-			if k := strings.ToLower(strings.TrimSpace(key)); k != "" && !keys[k] {
-				keys[k] = true
-				byEmail[k] = append(byEmail[k], c)
-			}
-		}
-	}
+	byEmail := indexConnectionsByEmail(conns)
 	matched := map[string]bool{}
 	rows := make([]accountSync, 0, len(accounts))
 	for _, acc := range accounts {

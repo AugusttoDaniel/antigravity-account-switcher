@@ -883,6 +883,7 @@
       }
       const [label, style] = OMNI_PROXY_STATUS[a.proxy_status] || [a.proxy_status, 'neutral'];
       const inherited = a.omniroute_level === 'provider' || a.omniroute_level === 'global';
+      const canBind = (a.proxy_status === 'differs' || a.proxy_status === 'missing_there') && !a.local_proxy_invalid && a.local_proxy && !(a.omniroute_connections > 1);
       const notes = [];
       if (inherited) notes.push(`inherited from the ${a.omniroute_level} setting, shared with other accounts`);
       if (a.omniroute_connections > 1) notes.push(`${a.omniroute_connections} connections for this account in OmniRoute (duplicate)`);
@@ -893,9 +894,9 @@
           <td><span class="pool-status pool-status-ok">Yes</span></td>
           <td class="proxy-cell">${localProxyCell(a)}</td>
           <td class="proxy-cell">${a.omniroute_proxy ? escapeHtml(a.omniroute_proxy) : 'direct'}</td>
-          <td><span class="pool-status pool-status-${style}">${escapeHtml(label)}</span>${notes.length ? `<span class="pool-error">${escapeHtml(notes.join(' · '))}</span>` : ''}</td>
+          <td><span class="pool-status pool-status-${style}">${escapeHtml(label)}</span>${notes.length ? `<span class="pool-error">${escapeHtml(notes.join(' · '))}</span>` : ''}${canBind ? `<button class="btn btn-xs btn-secondary btn-omni-bind" data-account="${escapeHtml(a.account_id)}" title="Make the OmniRoute connection use the proxy this account has here">Bind in OmniRoute</button>` : ''}</td>
         </tr>`;
-    }).join('') || '<tr><td colspan="5" class="pool-error">No accounts here yet.</td></tr>';
+    }).join('') ||'<tr><td colspan="5" class="pool-error">No accounts here yet.</td></tr>';
 
     const only = omni.lastOnly || [];
     omni.onlyWrap.hidden = only.length === 0;
@@ -903,6 +904,52 @@
       const label = isPrivacyMode ? '[redacted]' : escapeHtml(c.email || c.name || c.connection_id);
       return `<li><span class="pool-proxy">${label}</span><span class="pool-usage">not in this switcher</span></li>`;
     }).join('');
+  }
+
+  // Two-step, since it changes where an account's traffic leaves from in production: the first
+  // click arms the button, a second click within 4s binds.
+  async function bindOmniProxy(btn) {
+    if (btn.dataset.armed !== 'true') {
+      btn.dataset.armed = 'true';
+      btn.textContent = 'Confirm bind';
+      btn.classList.add('btn-danger-confirm');
+      setTimeout(() => {
+        if (!btn.isConnected) return;
+        btn.dataset.armed = 'false';
+        btn.textContent = 'Bind in OmniRoute';
+        btn.classList.remove('btn-danger-confirm');
+      }, 4000);
+      return;
+    }
+    const target = omniTarget();
+    if (!target) {
+      omni.summary.textContent = 'Fill in the OmniRoute URL and token first.';
+      return;
+    }
+    btn.disabled = true;
+    btn.textContent = 'Binding…';
+    try {
+      const res = await fetch('/api/omniroute/bind', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...target, account_id: btn.dataset.account })
+      });
+      if (!res.ok) {
+        showToast(`Could not bind: ${await apiErrorMessage(res)}`, 'error', 6000);
+        btn.disabled = false;
+        btn.dataset.armed = 'false';
+        btn.textContent = 'Bind in OmniRoute';
+        btn.classList.remove('btn-danger-confirm');
+        return;
+      }
+      const data = await res.json();
+      showToast(data.changed ? `Proxy bound in OmniRoute (was ${data.was})` : 'Proxy was already in effect in OmniRoute', 'success', 4000);
+      compareOmni(); // show the result of what OmniRoute now resolves
+    } catch (err) {
+      showToast(`Could not bind: ${err.message}`, 'error', 6000);
+      btn.disabled = false;
+      btn.textContent = 'Bind in OmniRoute';
+    }
   }
 
   async function compareOmni() {
@@ -960,6 +1007,10 @@
       omni.region.value = localStorage.getItem(OMNIROUTE_REGION_KEY) || '';
     } catch (_) {}
     omni.compareBtn.addEventListener('click', compareOmni);
+    omni.accountsBody.addEventListener('click', (e) => {
+      const btn = e.target.closest('.btn-omni-bind');
+      if (btn) bindOmniProxy(btn);
+    });
     omni.token.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') compareOmni();
     });

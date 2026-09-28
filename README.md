@@ -234,6 +234,14 @@ Accounts OmniRoute already has are skipped, never duplicated: one already import
 as is unless you pass `--overwrite` to refresh its tokens there, and one connected through
 OmniRoute's own Antigravity login is skipped unless you pass `--allow-duplicate`, since importing
 it would make OmniRoute use the same Google account twice.
+
+The account's proxy follows it into OmniRoute (`--assign-proxies`, on by default), **including for
+accounts OmniRoute already has**: the proxy is registered there and bound to the account's
+connection, then OmniRoute is asked which proxy the connection now resolves to, and the command
+fails loudly if that is not the one bound. It only writes when the two differ, so running it again
+changes nothing, and it never removes a proxy: an account without one is left alone. The dashboard's
+**OmniRoute Sync** section shows the same comparison and has a **Bind in OmniRoute** button (with a
+confirmation click) for accounts whose proxy differs or is missing there.
 - **Web Dashboard Privacy Mode:**
   Click the **Privacy** button in the dashboard header or press <kbd>P</kbd> to blur and redact all Google account email addresses across cards, active routing, and live proxy event logs for safe screenshots and screen-sharing.
 

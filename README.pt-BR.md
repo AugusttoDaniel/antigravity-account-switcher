@@ -236,6 +236,14 @@ está, a menos que você passe `--overwrite` para atualizar os tokens dela lá, 
 login de Antigravity do próprio OmniRoute é pulada, a menos que você passe `--allow-duplicate`,
 já que importá-la faria o OmniRoute usar a mesma conta Google duas vezes.
 
+O proxy da conta acompanha ela até o OmniRoute (`--assign-proxies`, ligado por padrão), **inclusive
+para contas que o OmniRoute já tem**: o proxy é cadastrado lá e vinculado à conexão da conta, e em
+seguida o OmniRoute é consultado sobre qual proxy a conexão passou a usar; o comando falha com
+mensagem clara se não for o vinculado. Só escreve quando os dois diferem, então rodar de novo não
+muda nada, e nunca remove um proxy: conta sem proxy é deixada como está. A seção **OmniRoute Sync**
+do dashboard mostra a mesma comparação e tem um botão **Bind in OmniRoute** (com clique de
+confirmação) para as contas cujo proxy é diferente ou está ausente lá.
+
 ---
 
 ## Fallback Multi-Modelo & Auto-Recuperação
