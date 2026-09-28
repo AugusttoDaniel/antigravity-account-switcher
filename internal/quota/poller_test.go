@@ -6,11 +6,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/domain"
+	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/egress"
 	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/store/sqlite"
 	"github.com/AugusttoDaniel/antigravity-account-switcher/test/mocks"
 )
@@ -664,5 +667,37 @@ func TestPoller_DisabledAccounts_Skipped(t *testing.T) {
 
 	if called {
 		t.Error("expected disabled account to be skipped, but server was called")
+	}
+}
+
+// An account whose stored proxy is unusable must not be polled from the real IP: the poller's
+// client for it refuses every request instead of falling back to the direct client.
+func TestGetClientForAccount_InvalidProxyFailsClosed(t *testing.T) {
+	var hits int32
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		atomic.AddInt32(&hits, 1)
+	}))
+	defer server.Close()
+
+	_, accRepo, quotaRepo := setupTestStore(t)
+	p, err := NewPoller(accRepo, quotaRepo, WithBaseURL(server.URL))
+	if err != nil {
+		t.Fatalf("NewPoller: %v", err)
+	}
+
+	acc := &domain.Account{Email: "acc1@example.com", ProxyURL: "1.2.3.4:8080:alice:s3cret"}
+	resp, err := p.getClientForAccount(acc).Get(server.URL)
+	if err == nil {
+		_ = resp.Body.Close()
+		t.Fatal("expected the request to be refused")
+	}
+	if !errors.Is(err, egress.ErrInvalidProxy) {
+		t.Errorf("expected ErrInvalidProxy, got %v", err)
+	}
+	if strings.Contains(err.Error(), "s3cret") {
+		t.Errorf("error leaks the proxy password: %v", err)
+	}
+	if n := atomic.LoadInt32(&hits); n != 0 {
+		t.Errorf("request reached the server %d time(s) directly; must fail closed", n)
 	}
 }

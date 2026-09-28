@@ -135,8 +135,11 @@ func BuildScopedEnv(baseEnv []string, proxyURL string) []string {
 		"HTTPS_PROXY="+proxyURL,
 		"http_proxy="+proxyURL,
 		"https_proxy="+proxyURL,
-		"NO_PROXY=localhost,127.0.0.1,::1,speech.googleapis.com",
-		"no_proxy=localhost,127.0.0.1,::1,speech.googleapis.com",
+		// Only loopback bypasses the switcher. Every other host, speech.googleapis.com included,
+		// goes through it so it leaves via the active account's route instead of the real IP; the
+		// raw CONNECT tunnel carries voice streams byte-for-byte.
+		"NO_PROXY=localhost,127.0.0.1,::1",
+		"no_proxy=localhost,127.0.0.1,::1",
 		"CLOUD_CODE_URL="+proxyURL,
 	)
 

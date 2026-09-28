@@ -74,6 +74,7 @@ type SSEChunkPayload struct {
 // RecordedRequest records an incoming HTTP request for test assertions.
 type RecordedRequest struct {
 	Method     string
+	Host       string // r.Host; net/http moves the Host header out of Header
 	Path       string
 	RawQuery   string
 	Header     http.Header
@@ -238,6 +239,7 @@ func (m *MockGoogleServer) record(r *http.Request) ([]byte, string) {
 	m.mu.Lock()
 	m.requests = append(m.requests, RecordedRequest{
 		Method:     r.Method,
+		Host:       r.Host,
 		Path:       r.URL.Path,
 		RawQuery:   r.URL.RawQuery,
 		Header:     r.Header.Clone(),

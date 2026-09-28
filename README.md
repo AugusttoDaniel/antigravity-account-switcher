@@ -346,7 +346,7 @@ antigravity-account-switcher config set antigravity_bin /path/to/antigravity
 ```
 
 #### 2. Does this interfere with native voice dictation (Speech-to-Text)?
-No. The switcher automatically sets `NO_PROXY=speech.googleapis.com` and provides raw RFC 7231 TCP tunneling on `CONNECT` requests, ensuring audio streaming functions with zero interference.
+No. Voice traffic (`speech.googleapis.com`) is carried through a raw RFC 7231 TCP tunnel on `CONNECT` requests, byte-for-byte, so audio streaming is not inspected or altered. Like all non-loopback traffic, the tunnel leaves through the active account's proxy, so dictation never reveals your real IP.
 
 #### 3. Where are my tokens and credentials stored?
 Tokens are stored strictly on your local filesystem in SQLite (`~/.config/antigravity-account-switcher/accounts.db`). No credentials or telemetry ever leave your machine.

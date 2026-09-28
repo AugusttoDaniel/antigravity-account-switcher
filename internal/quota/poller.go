@@ -8,12 +8,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/domain"
+	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/egress"
 )
 
 const (
@@ -167,25 +167,27 @@ func (p *Poller) getClientForAccount(acc *domain.Account) *http.Client {
 	}
 	p.proxyMu.RUnlock()
 
-	parsedProxy, err := url.Parse(proxyStr)
-	if err != nil {
-		return p.client
-	}
-
 	p.proxyMu.Lock()
 	defer p.proxyMu.Unlock()
 	if c, ok := p.proxyClients[proxyStr]; ok {
 		return c
 	}
 
-	client := &http.Client{
-		Timeout: DefaultHTTPTimeout,
-		Transport: &http.Transport{
-			Proxy:               http.ProxyURL(parsedProxy),
-			MaxIdleConns:        50,
-			MaxIdleConnsPerHost: 10,
-			IdleConnTimeout:     90 * time.Second,
-		},
+	var client *http.Client
+	if parsedProxy, err := egress.ParseProxyURL(proxyStr); err != nil {
+		// Never fall back to the direct client: that would poll this account from the operator's
+		// real IP. The fail-closed client makes its requests error out instead.
+		client = egress.FailClosedClient(fmt.Errorf("account %s: %w", acc.Email, err))
+	} else {
+		client = &http.Client{
+			Timeout: DefaultHTTPTimeout,
+			Transport: &http.Transport{
+				Proxy:               http.ProxyURL(parsedProxy),
+				MaxIdleConns:        50,
+				MaxIdleConnsPerHost: 10,
+				IdleConnTimeout:     90 * time.Second,
+			},
+		}
 	}
 
 	if p.proxyClients == nil {

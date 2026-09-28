@@ -2,6 +2,7 @@ package web
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -941,30 +942,51 @@ func TestServer_RejectsDNSRebindingAndCrossOrigin(t *testing.T) {
 	}
 }
 
-func TestValidateProxyURL(t *testing.T) {
-	valid := []string{
-		"",
-		"http://127.0.0.1:8080",
-		"http://user:pass@proxy.example.com:3128",
-		"https://proxy.example.com:443",
-		"socks5://10.0.0.1:1080",
-		"socks5h://host:1080",
+// The proxy URL rules themselves are covered in package egress; this checks the dashboard wires
+// them in: an unusable proxy is rejected, not persisted, and its credentials are not echoed back.
+func TestUpdateAccountProxy_ValidatesBeforePersisting(t *testing.T) {
+	_, accRepo, quotaRepo, _, metricsSvc, broadcaster, eventRepo := setupTestWeb(t)
+	now := time.Now().UTC()
+	acc := &domain.Account{ID: "acc-proxy", Email: "user1@gmail.com", Status: domain.AccountStatusActive, CreatedAt: now, UpdatedAt: now}
+	if err := accRepo.Create(context.Background(), acc); err != nil {
+		t.Fatalf("create account: %v", err)
 	}
-	for _, v := range valid {
-		if err := validateProxyURL(v); err != nil {
-			t.Errorf("expected %q to be valid, got %v", v, err)
-		}
+	server, err := NewServer(accRepo, quotaRepo, metricsSvc, broadcaster, eventRepo, nil)
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
 	}
 
-	invalid := []string{
-		"1.2.3.4:8080",      // no scheme -> would silently fall back to direct
-		"proxy.example.com", // no scheme
-		"ftp://host:21",     // unsupported scheme
-		"http://",           // missing host
+	put := func(proxyURL string) *httptest.ResponseRecorder {
+		body, _ := json.Marshal(map[string]string{"proxy_url": proxyURL})
+		req := httptest.NewRequest(http.MethodPut, "/api/accounts/"+acc.ID, bytes.NewReader(body))
+		req.Host = "127.0.0.1:8080"
+		rr := httptest.NewRecorder()
+		server.ServeHTTP(rr, req)
+		return rr
 	}
-	for _, v := range invalid {
-		if err := validateProxyURL(v); err == nil {
-			t.Errorf("expected %q to be rejected, got nil error", v)
+	storedProxy := func() string {
+		got, err := accRepo.GetByID(context.Background(), acc.ID)
+		if err != nil {
+			t.Fatalf("GetByID: %v", err)
 		}
+		return got.ProxyURL
+	}
+
+	rr := put("1.2.3.4:8080:alice:s3cretPW")
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for provider-list format, got %d", rr.Code)
+	}
+	if strings.Contains(rr.Body.String(), "s3cretPW") {
+		t.Errorf("error response echoes the proxy password: %s", rr.Body.String())
+	}
+	if p := storedProxy(); p != "" {
+		t.Errorf("invalid proxy must not be persisted, stored %q", p)
+	}
+
+	if rr := put("http://alice:s3cretPW@proxy.example.com:3128"); rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 for a valid proxy, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if p := storedProxy(); p != "http://alice:s3cretPW@proxy.example.com:3128" {
+		t.Errorf("valid proxy not persisted, stored %q", p)
 	}
 }

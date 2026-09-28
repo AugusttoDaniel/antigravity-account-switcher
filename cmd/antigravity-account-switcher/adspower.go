@@ -14,6 +14,7 @@ import (
 	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/adspower"
 	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/config"
 	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/domain"
+	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/egress"
 	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/oauth"
 	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/proxypool"
 	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/store/sqlite"
@@ -99,6 +100,12 @@ func runAddAccountAdsPower(args []string) {
 			fmt.Fprintf(os.Stderr, "Error selecting proxy: %v\n", err)
 			os.Exit(1)
 		}
+	}
+	// Whatever the source (flag, stored account, profile or pool), refuse an unusable proxy before
+	// any profile is created: binding it would make the account egress fail closed.
+	if err := egress.ValidateProxyURL(proxyURL); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: proxy %s: %v\n", maskProxy(proxyURL), err)
+		os.Exit(1)
 	}
 
 	// 2. Decide the ADS Power profile: explicit --profile > the account's stored profile > create one.
@@ -219,6 +226,9 @@ func runImportAdsPower(args []string) {
 // the loopback OAuth flow through proxyURL, and records the proxy + profile binding on the account.
 // The profile browser is stopped before returning. Shared by the single and batch commands.
 func onboardViaProfile(ctx context.Context, ads *adspower.Client, oauthService *oauth.OAuthService, accRepo *sqlite.AccountRepository, profileID, proxyURL string) (*domain.Account, error) {
+	if err := egress.ValidateProxyURL(proxyURL); err != nil {
+		return nil, fmt.Errorf("proxy %s: %w", maskProxy(proxyURL), err)
+	}
 	started, err := ads.StartBrowser(ctx, profileID, false)
 	if err != nil {
 		return nil, fmt.Errorf("start ADS Power browser %s: %w", profileID, err)
@@ -312,16 +322,19 @@ func deriveProfileName(email string) string {
 	return "ag-account-" + time.Now().UTC().Format("20060102-150405")
 }
 
-// maskProxy hides credentials in a proxy URL for display.
+// maskProxy renders a proxy for display without its credentials. A value that is not a valid proxy
+// URL may carry credentials in any position (e.g. host:port:user:pass), so it is not shown at all.
 func maskProxy(raw string) string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return "(direct)"
 	}
-	at := strings.LastIndex(raw, "@")
-	scheme := strings.Index(raw, "://")
-	if at > 0 && scheme > 0 && at > scheme {
-		return raw[:scheme+3] + "***@" + raw[at+1:]
+	u, err := egress.ParseProxyURL(raw)
+	if err != nil {
+		return "(invalid proxy URL, hidden)"
 	}
-	return raw
+	if u.User != nil {
+		return u.Scheme + "://***@" + u.Host
+	}
+	return u.Scheme + "://" + u.Host
 }

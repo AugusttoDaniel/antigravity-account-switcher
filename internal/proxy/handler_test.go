@@ -114,13 +114,54 @@ func TestProxyHandler_BasicForwarding(t *testing.T) {
 
 	// Verify Host header was retargeted to mockGoogle host
 	parsedMockURL, _ := url.Parse(mockGoogle.URL)
-	if recorded.Header.Get("Host") != parsedMockURL.Host && recorded.Header.Get("X-Forwarded-Host") == "" {
-		t.Errorf("expected host header or forwarded host to match upstream")
+	if recorded.Host != parsedMockURL.Host {
+		t.Errorf("expected upstream Host %q, got %q", parsedMockURL.Host, recorded.Host)
 	}
 
-	// Verify X-Forwarded-For is present
-	if recorded.Header.Get("X-Forwarded-For") == "" {
-		t.Errorf("expected X-Forwarded-For header to be set")
+	// The proxy hop must stay invisible upstream (see forwardingHeaders)
+	for _, h := range forwardingHeaders {
+		if v := recorded.Header.Get(h); v != "" {
+			t.Errorf("upstream received %s: %q; the proxy must not advertise itself", h, v)
+		}
+	}
+}
+
+// Headers a client sends that would reveal the proxy chain are dropped too, not just never added.
+func TestProxyHandler_StripsClientForwardingHeaders(t *testing.T) {
+	mockGoogle := mocks.NewMockGoogleServer()
+	defer mockGoogle.Close()
+
+	_, accountRepo, _, _ := setupTestDB(t)
+	now := time.Now().UTC()
+	acc := &domain.Account{ID: "acc-1", Email: "user1@gmail.com", AccessToken: "token-1", IsActive: true, Status: domain.AccountStatusActive, CreatedAt: now, UpdatedAt: now}
+	if err := accountRepo.Create(context.Background(), acc); err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	handler, err := NewProxyHandler(accountRepo, WithTargetURL(mockGoogle.URL))
+	if err != nil {
+		t.Fatalf("NewProxyHandler: %v", err)
+	}
+	proxyServer := httptest.NewServer(handler)
+	defer proxyServer.Close()
+
+	req, _ := http.NewRequest(http.MethodPost, proxyServer.URL+"/v1internal:generateContent", strings.NewReader(`{}`))
+	for _, h := range forwardingHeaders {
+		req.Header.Set(h, "203.0.113.7")
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	_ = resp.Body.Close()
+
+	reqs := mockGoogle.GetRecordedRequests()
+	if len(reqs) != 1 {
+		t.Fatalf("expected 1 upstream request, got %d", len(reqs))
+	}
+	for _, h := range forwardingHeaders {
+		if v := reqs[0].Header.Get(h); v != "" {
+			t.Errorf("client-supplied %s leaked upstream: %q", h, v)
+		}
 	}
 }
 
