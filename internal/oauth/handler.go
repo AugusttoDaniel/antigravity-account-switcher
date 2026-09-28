@@ -93,10 +93,18 @@ func discoverFromTokenFile() (string, string) {
 func discoverFromIDEBundle() (string, string) {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "", ""
+		home = ""
 	}
 	candidates := []string{
-		// Antigravity 2.0 language_server binary paths
+		// Windows Antigravity paths
+		filepath.Join(home, "AppData", "Local", "Programs", "Antigravity", "resources", "bin", "language_server.exe"),
+		filepath.Join(home, "AppData", "Local", "Programs", "antigravity", "resources", "bin", "language_server.exe"),
+		filepath.Join(home, "AppData", "Local", "Programs", "Antigravity", "resources", "app", "out", "main.js"),
+		filepath.Join(home, "AppData", "Roaming", "Antigravity", "resources", "bin", "language_server.exe"),
+		`C:\Program Files\Antigravity\resources\bin\language_server.exe`,
+		`C:\Program Files\antigravity\resources\bin\language_server.exe`,
+		`C:\Program Files (x86)\Antigravity\resources\bin\language_server.exe`,
+		// Linux/XDG Antigravity paths
 		filepath.Join(home, ".local", "share", "antigravity", "resources", "bin", "language_server"),
 		filepath.Join(home, ".local", "share", "antigravity", "Antigravity-x64", "resources", "bin", "language_server"),
 		filepath.Join(home, "tools", "Antigravity", "Antigravity-x64", "resources", "bin", "language_server"),

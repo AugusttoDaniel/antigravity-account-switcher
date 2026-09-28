@@ -33,6 +33,10 @@ func FindExistingACPTokenFile() string {
 	candidates := []string{
 		filepath.Join(home, ".gemini", "antigravity-acp", "acp_token.json"),
 		filepath.Join(home, ".gemini", "antigravity-cli", "acp_token.json"),
+		filepath.Join(home, ".gemini", "antigravity", "acp_token.json"),
+		filepath.Join(home, ".config", "antigravity", "acp_token.json"),
+		filepath.Join(home, "AppData", "Roaming", "Antigravity", "acp_token.json"),
+		filepath.Join(home, "AppData", "Local", "Antigravity", "acp_token.json"),
 	}
 
 	for _, p := range candidates {
