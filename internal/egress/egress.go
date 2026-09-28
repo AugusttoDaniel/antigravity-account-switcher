@@ -87,6 +87,24 @@ func formatHint(raw string) string {
 	return ""
 }
 
+// MaskProxyURL renders a proxy URL for display without credentials: scheme://***@host:port, or
+// scheme://host:port when it has none. An empty raw yields "" with ok true. ok is false when raw is
+// not a usable proxy URL; nothing of it is returned then, because credentials may sit in any
+// position of an unparseable value (e.g. host:port:user:pass).
+func MaskProxyURL(raw string) (masked string, ok bool) {
+	if strings.TrimSpace(raw) == "" {
+		return "", true
+	}
+	u, err := ParseProxyURL(raw)
+	if err != nil {
+		return "", false
+	}
+	if u.User != nil {
+		return u.Scheme + "://***@" + u.Host, true
+	}
+	return u.Scheme + "://" + u.Host, true
+}
+
 // FailClosedClient returns an *http.Client that refuses every request with cause. It stands in for
 // an account whose proxy is unusable, so its traffic errors out instead of leaving directly.
 func FailClosedClient(cause error) *http.Client {

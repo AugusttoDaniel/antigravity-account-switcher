@@ -327,6 +327,28 @@
     </section>
   </main>
 
+  <!-- Outbound Proxy Editor. The current proxy is only ever shown masked: the dashboard never
+       receives its credentials, so a new URL replaces it wholesale and a blank field keeps it. -->
+  <dialog id="proxy-dialog" class="proxy-dialog" aria-labelledby="proxy-dialog-title">
+    <form id="proxy-dialog-form" method="dialog" novalidate>
+      <h2 id="proxy-dialog-title" class="proxy-dialog-title">Outbound proxy</h2>
+      <p id="proxy-dialog-account" class="proxy-dialog-account mono"></p>
+      <p class="proxy-dialog-current">Current: <span id="proxy-dialog-current" class="mono"></span></p>
+      <label for="proxy-dialog-input" class="proxy-dialog-label">New proxy URL</label>
+      <input id="proxy-dialog-input" class="proxy-dialog-input mono" type="text" name="proxy_url"
+             autocomplete="off" spellcheck="false" placeholder="http://user:pass@host:port"
+             aria-describedby="proxy-dialog-hint proxy-dialog-error">
+      <p id="proxy-dialog-hint" class="proxy-dialog-hint">http, https, socks5 or socks5h. Leave blank to keep the current proxy.</p>
+      <p id="proxy-dialog-error" class="proxy-dialog-error" role="alert" hidden></p>
+      <div class="proxy-dialog-actions">
+        <button type="button" id="proxy-dialog-remove" class="btn btn-danger-subtle">Remove proxy (direct)</button>
+        <span class="proxy-dialog-spacer"></span>
+        <button type="button" id="proxy-dialog-cancel" class="btn btn-secondary">Cancel</button>
+        <button type="submit" id="proxy-dialog-save" class="btn btn-primary" disabled>Save</button>
+      </div>
+    </form>
+  </dialog>
+
   <!-- Global Toast Notifications Container -->
   <div id="toast-container" class="toast-container" aria-live="assertive"></div>
 

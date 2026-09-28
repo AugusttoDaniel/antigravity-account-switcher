@@ -990,3 +990,73 @@ func TestUpdateAccountProxy_ValidatesBeforePersisting(t *testing.T) {
 		t.Errorf("valid proxy not persisted, stored %q", p)
 	}
 }
+
+// The dashboard never needs a proxy's credentials back (editing replaces the proxy), so no API
+// response may contain them: not the list, the detail, the status' active account, nor the PUT echo.
+func TestAPI_NeverReturnsProxyCredentials(t *testing.T) {
+	_, accRepo, quotaRepo, _, metricsSvc, broadcaster, eventRepo := setupTestWeb(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	seed := []*domain.Account{
+		{ID: "acc-valid", Email: "user1@gmail.com", ProxyURL: "http://alice:s3cretPW@proxy.example.com:3128", IsActive: true},
+		{ID: "acc-legacy", Email: "user2@gmail.com", ProxyURL: "1.2.3.4:8080:bob:s3cretPW"},
+		{ID: "acc-direct", Email: "user3@gmail.com"},
+	}
+	for _, a := range seed {
+		a.Status, a.CreatedAt, a.UpdatedAt = domain.AccountStatusActive, now, now
+		if err := accRepo.Create(ctx, a); err != nil {
+			t.Fatalf("create %s: %v", a.ID, err)
+		}
+	}
+	server, err := NewServer(accRepo, quotaRepo, metricsSvc, broadcaster, eventRepo, nil)
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+
+	// call checks the raw body, not the decoded JSON, so a secret in any field is caught.
+	call := func(method, path, body string) string {
+		t.Helper()
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		req.Host = "127.0.0.1:8080"
+		rr := httptest.NewRecorder()
+		server.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("%s %s: status %d: %s", method, path, rr.Code, rr.Body.String())
+		}
+		raw := rr.Body.String()
+		for _, secret := range []string{"s3cretPW", "alice", "bob"} {
+			if strings.Contains(raw, secret) {
+				t.Errorf("%s %s leaks %q: %s", method, path, secret, raw)
+			}
+		}
+		return raw
+	}
+
+	call(http.MethodGet, "/api/status", "")
+	call(http.MethodGet, "/api/accounts/acc-valid", "")
+	call(http.MethodPut, "/api/accounts/acc-direct", `{"proxy_url":"http://alice:s3cretPW@proxy.example.com:3128"}`)
+
+	var list []*AccountWithBuckets
+	if err := json.Unmarshal([]byte(call(http.MethodGet, "/api/accounts", "")), &list); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	byID := map[string]*AccountWithBuckets{}
+	for _, a := range list {
+		byID[a.ID] = a
+	}
+	if v := byID["acc-valid"]; v.ProxyURL != "http://***@proxy.example.com:3128" || v.ProxyInvalid {
+		t.Errorf("valid proxy: got proxy_url=%q invalid=%v", v.ProxyURL, v.ProxyInvalid)
+	}
+	if v := byID["acc-legacy"]; v.ProxyURL != "" || !v.ProxyInvalid {
+		t.Errorf("legacy invalid proxy: got proxy_url=%q invalid=%v, want hidden and flagged", v.ProxyURL, v.ProxyInvalid)
+	}
+	if v := byID["acc-direct"]; v.ProxyURL != "http://***@proxy.example.com:3128" {
+		t.Errorf("proxy set via PUT not reflected (masked): %q", v.ProxyURL)
+	}
+
+	// The masked display is only a view: the stored value must still be the real one.
+	stored, err := accRepo.GetByID(ctx, "acc-direct")
+	if err != nil || stored.ProxyURL != "http://alice:s3cretPW@proxy.example.com:3128" {
+		t.Errorf("stored proxy must keep its credentials, got %q (err %v)", stored.ProxyURL, err)
+	}
+}

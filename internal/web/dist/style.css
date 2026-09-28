@@ -1604,3 +1604,51 @@ body.privacy-mode .blurred-email {
   }
 }
 
+
+/* =========================================================================
+   Outbound Proxy Editor Dialog
+   ========================================================================= */
+.proxy-dialog {
+  width: min(480px, calc(100vw - 2rem));
+  padding: 1.25rem;
+  background: var(--bg-surface-elevated);
+  color: var(--text-primary);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+}
+.proxy-dialog::backdrop { background: rgba(4, 7, 13, 0.72); }
+.proxy-dialog-title { margin: 0 0 0.25rem; font-size: 1rem; font-weight: 600; }
+.proxy-dialog-account { margin: 0 0 0.9rem; font-size: 0.8rem; color: var(--text-secondary); overflow-wrap: anywhere; }
+.proxy-dialog-current { margin: 0 0 1rem; font-size: 0.78rem; color: var(--text-muted); overflow-wrap: anywhere; }
+.proxy-dialog-current .is-invalid { color: var(--color-warning); }
+.proxy-dialog-label { display: block; margin-bottom: 0.35rem; font-size: 0.78rem; color: var(--text-secondary); }
+.proxy-dialog-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.6rem 0.75rem;
+  background: var(--bg-input);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.proxy-dialog-input:focus { outline: none; border-color: var(--border-focus); box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.2); }
+.proxy-dialog-input[aria-invalid="true"] { border-color: var(--color-danger); }
+.proxy-dialog-hint { margin: 0.4rem 0 0; font-size: 0.72rem; color: var(--text-muted); }
+.proxy-dialog-error {
+  margin: 0.6rem 0 0;
+  padding: 0.5rem 0.65rem;
+  font-size: 0.75rem;
+  color: var(--color-danger);
+  background: var(--color-danger-bg);
+  border: 1px solid var(--color-danger-border);
+  border-radius: var(--radius-md);
+  overflow-wrap: anywhere;
+}
+.proxy-dialog-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-top: 1.1rem; }
+.proxy-dialog-spacer { flex: 1; }
+.proxy-label { color: var(--text-secondary); }
+.proxy-info-row.is-invalid .proxy-label { color: var(--color-warning); }

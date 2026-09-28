@@ -90,6 +90,29 @@ func TestParseProxyURL_HintsProviderListFormat(t *testing.T) {
 	}
 }
 
+func TestMaskProxyURL(t *testing.T) {
+	cases := []struct {
+		in, want string
+		ok       bool
+	}{
+		{"", "", true},
+		{"http://alice:s3cret@proxy.example:8080", "http://***@proxy.example:8080", true},
+		{"http://alice:s3cret@proxy.example:8080/path?x=1", "http://***@proxy.example:8080", true},
+		{"socks5://10.0.0.1:1080", "socks5://10.0.0.1:1080", true},
+		{"1.2.3.4:8080:alice:s3cret", "", false},
+		{"alice:s3cret@proxy.example:80", "", false},
+	}
+	for _, c := range cases {
+		got, ok := MaskProxyURL(c.in)
+		if got != c.want || ok != c.ok {
+			t.Errorf("MaskProxyURL(%q) = (%q, %v), want (%q, %v)", c.in, got, ok, c.want, c.ok)
+		}
+		if strings.Contains(got, "s3cret") || strings.Contains(got, "alice") {
+			t.Errorf("MaskProxyURL(%q) leaks credentials: %q", c.in, got)
+		}
+	}
+}
+
 func TestIsLoopbackHost(t *testing.T) {
 	cases := map[string]bool{
 		"127.0.0.1:8080":        true,

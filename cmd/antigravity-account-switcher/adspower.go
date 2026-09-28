@@ -325,16 +325,13 @@ func deriveProfileName(email string) string {
 // maskProxy renders a proxy for display without its credentials. A value that is not a valid proxy
 // URL may carry credentials in any position (e.g. host:port:user:pass), so it is not shown at all.
 func maskProxy(raw string) string {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return "(direct)"
-	}
-	u, err := egress.ParseProxyURL(raw)
-	if err != nil {
+	masked, ok := egress.MaskProxyURL(raw)
+	switch {
+	case !ok:
 		return "(invalid proxy URL, hidden)"
+	case masked == "":
+		return "(direct)"
+	default:
+		return masked
 	}
-	if u.User != nil {
-		return u.Scheme + "://***@" + u.Host
-	}
-	return u.Scheme + "://" + u.Host
 }
