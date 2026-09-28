@@ -231,6 +231,11 @@ antigravity-account-switcher export-omniroute --out ./omniroute-tokens
 Também pode enviar direto para uma instância local do OmniRoute e amarrar o proxy de cada conta lá.
 Rode `antigravity-account-switcher export-omniroute --help` para as flags do modo API.
 
+Contas que o OmniRoute já tem são puladas, nunca duplicadas: uma já importada (`agy`) fica como
+está, a menos que você passe `--overwrite` para atualizar os tokens dela lá, e uma conectada pelo
+login de Antigravity do próprio OmniRoute é pulada, a menos que você passe `--allow-duplicate`,
+já que importá-la faria o OmniRoute usar a mesma conta Google duas vezes.
+
 ---
 
 ## Fallback Multi-Modelo & Auto-Recuperação

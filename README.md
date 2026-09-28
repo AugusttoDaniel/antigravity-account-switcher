@@ -229,6 +229,11 @@ antigravity-account-switcher export-omniroute --out ./omniroute-tokens
 
 It can also push directly to a local OmniRoute instance and bind each account's proxy inside it.
 Run `antigravity-account-switcher export-omniroute --help` for the API-mode flags.
+
+Accounts OmniRoute already has are skipped, never duplicated: one already imported (`agy`) is left
+as is unless you pass `--overwrite` to refresh its tokens there, and one connected through
+OmniRoute's own Antigravity login is skipped unless you pass `--allow-duplicate`, since importing
+it would make OmniRoute use the same Google account twice.
 - **Web Dashboard Privacy Mode:**
   Click the **Privacy** button in the dashboard header or press <kbd>P</kbd> to blur and redact all Google account email addresses across cards, active routing, and live proxy event logs for safe screenshots and screen-sharing.
 
