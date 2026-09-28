@@ -236,8 +236,8 @@ func Wrap(ctx context.Context, cmdArgs []string, opts ...Option) (int, error) {
 		// Automatically import existing Antigravity login if pool is empty
 		_, _ = oauth.AutoImportExistingAccount(ctx, accRepo, oauthService)
 
-		tokenRefresher := quota.TokenRefresherFunc(func(ctx context.Context, rt string) (string, time.Time, error) {
-			resp, err := oauthService.RefreshToken(ctx, rt)
+		tokenRefresher := quota.TokenRefresherFunc(func(ctx context.Context, rt, proxyURL string) (string, time.Time, error) {
+			resp, err := oauthService.RefreshTokenVia(ctx, rt, proxyURL)
 			if err != nil {
 				return "", time.Time{}, err
 			}

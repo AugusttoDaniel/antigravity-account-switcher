@@ -151,6 +151,9 @@ The CLI provides commands for launch supervision, manual switching, and configur
 | `serve` | Runs the proxy, background quota monitor, and web dashboard as a daemon. |
 | `wrap -- <cmd>` | Executes any arbitrary command with scoped switcher proxy variables. |
 | `add-account` | Initiates RFC 8252 loopback OAuth2 flow to register a Google account. |
+| `add-account-adspower` | Onboards an account through an isolated ADS Power profile + proxy (assisted login). |
+| `import-adspower` | Batch-onboards every ADS Power profile as an account, reusing each profile's proxy. |
+| `set-account-proxy` | Assigns or updates the outbound proxy URL for a specific account. |
 | `list-accounts` | Displays all registered accounts, active status, and quota percentages. |
 | `refresh-quotas` | Forces an immediate live quota sync from Google for all registered accounts. |
 | `status` | Shows the currently active account, token totals, and switcher health. |
@@ -177,6 +180,36 @@ The CLI provides commands for launch supervision, manual switching, and configur
   ```bash
   antigravity-account-switcher launch --fallback-secondary --model-primary gemini-2.5-pro --model-secondary claude-3-7-sonnet
   ```
+
+### Isolated Onboarding via ADS Power
+
+To keep each account's sign-in and traffic off your real IP and browser fingerprint, onboard
+through [ADS Power](https://www.adspower.com/) antidetect profiles. Every OAuth call — consent,
+code exchange, userinfo and background token refresh — egresses through the account's proxy, so
+Google never sees your real connection.
+
+Requirements: ADS Power running locally with its Local API enabled (default
+`http://local.adspower.net:50325`).
+
+1. Define a static pool of proxies for new accounts in the config file:
+   ```json
+   { "proxies": ["http://user:pass@host-a:8080", "socks5://user:pass@host-b:1080"] }
+   ```
+2. Onboard one account (creates an isolated profile bound to a never-used proxy, then opens its
+   browser at the Google consent page for you to sign in):
+   ```bash
+   antigravity-account-switcher add-account-adspower --email you@gmail.com
+   ```
+   - An existing account reuses its bound proxy/profile; a new one draws a never-used proxy from
+     the pool. Use `--proxy <url>` to force a specific proxy.
+3. Or batch-onboard every existing ADS Power profile, reusing each profile's own proxy:
+   ```bash
+   antigravity-account-switcher import-adspower --all
+   ```
+
+> Login is **assisted**: the switcher opens the isolated profile at the consent screen and you
+> complete the Google sign-in (including 2FA) inside that window. Credentials are never stored by
+> the switcher.
 - **Web Dashboard Privacy Mode:**
   Click the **Privacy** button in the dashboard header or press <kbd>P</kbd> to blur and redact all Google account email addresses across cards, active routing, and live proxy event logs for safe screenshots and screen-sharing.
 

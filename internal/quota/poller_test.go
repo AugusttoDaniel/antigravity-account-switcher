@@ -134,7 +134,7 @@ func TestPoller_TokenRefresh_OnExpired(t *testing.T) {
 	}
 
 	refreshed := false
-	refresher := TokenRefresherFunc(func(ctx context.Context, rt string) (string, time.Time, error) {
+	refresher := TokenRefresherFunc(func(ctx context.Context, rt, _ string) (string, time.Time, error) {
 		if rt != "refresh-token-1" {
 			t.Errorf("unexpected refresh token: %s", rt)
 		}
@@ -218,7 +218,7 @@ func TestPoller_Unauthorized_ForceRefresh(t *testing.T) {
 	}
 
 	refreshed := false
-	refresher := TokenRefresherFunc(func(ctx context.Context, rt string) (string, time.Time, error) {
+	refresher := TokenRefresherFunc(func(ctx context.Context, rt, _ string) (string, time.Time, error) {
 		refreshed = true
 		return "valid-token", now.Add(1 * time.Hour), nil
 	})
@@ -271,7 +271,7 @@ func TestPoller_RevokedToken_MarksError(t *testing.T) {
 		t.Fatalf("failed to create account: %v", err)
 	}
 
-	refresher := TokenRefresherFunc(func(ctx context.Context, rt string) (string, time.Time, error) {
+	refresher := TokenRefresherFunc(func(ctx context.Context, rt, _ string) (string, time.Time, error) {
 		return "", time.Time{}, errors.New("invalid_grant: Token has been expired or revoked.")
 	})
 

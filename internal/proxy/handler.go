@@ -28,17 +28,19 @@ const (
 	DefaultTokenMargin = 60 * time.Second
 )
 
-// TokenRefresher defines the contract for refreshing OAuth2 tokens.
+// TokenRefresher defines the contract for refreshing OAuth2 tokens. proxyURL is the account's
+// outbound proxy (empty for a direct connection); the refresh must egress through it so background
+// renewal does not leak the operator's real IP for a proxied account.
 type TokenRefresher interface {
-	RefreshToken(ctx context.Context, refreshToken string) (accessToken string, expiry time.Time, err error)
+	RefreshToken(ctx context.Context, refreshToken, proxyURL string) (accessToken string, expiry time.Time, err error)
 }
 
 // TokenRefresherFunc allows a function to satisfy the TokenRefresher interface.
-type TokenRefresherFunc func(ctx context.Context, refreshToken string) (string, time.Time, error)
+type TokenRefresherFunc func(ctx context.Context, refreshToken, proxyURL string) (string, time.Time, error)
 
 // RefreshToken invokes the underlying function.
-func (f TokenRefresherFunc) RefreshToken(ctx context.Context, refreshToken string) (string, time.Time, error) {
-	return f(ctx, refreshToken)
+func (f TokenRefresherFunc) RefreshToken(ctx context.Context, refreshToken, proxyURL string) (string, time.Time, error) {
+	return f(ctx, refreshToken, proxyURL)
 }
 
 // Config holds configuration parameters for the reverse proxy.
@@ -665,7 +667,7 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		// Proactively refresh access token if expired or near expiration window
 		if !isPassThrough && currentAcc != nil && currentAcc.IsTokenExpired(h.cfg.TokenExpiryMargin) && h.tokenRefresher != nil && currentAcc.RefreshToken != "" {
-			newAccess, newExpiry, refErr := h.tokenRefresher.RefreshToken(ctx, currentAcc.RefreshToken)
+			newAccess, newExpiry, refErr := h.tokenRefresher.RefreshToken(ctx, currentAcc.RefreshToken, currentAcc.ProxyURL)
 			if refErr == nil {
 				_ = h.accountRepo.UpdateToken(ctx, currentAcc.ID, newAccess, newExpiry)
 				currentAcc.AccessToken = newAccess
@@ -750,7 +752,7 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		// Check for expired/invalid credentials: HTTP 401 Unauthorized
 		if !isPassThrough && currentAcc != nil && resp.StatusCode == http.StatusUnauthorized && h.tokenRefresher != nil && currentAcc.RefreshToken != "" {
-			newAccess, newExpiry, refErr := h.tokenRefresher.RefreshToken(ctx, currentAcc.RefreshToken)
+			newAccess, newExpiry, refErr := h.tokenRefresher.RefreshToken(ctx, currentAcc.RefreshToken, currentAcc.ProxyURL)
 			if refErr == nil {
 				_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 512*1024))
 				_ = resp.Body.Close()

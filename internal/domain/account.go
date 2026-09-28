@@ -21,16 +21,20 @@ const (
 
 // Account represents a Google user account managed by the switcher.
 type Account struct {
-	ID           string        `json:"id"`
-	Email        string        `json:"email"`
-	RefreshToken string        `json:"-"` // Omit credentials from JSON serialization for security
-	AccessToken  string        `json:"-"` // Omit credentials from JSON serialization for security
-	TokenExpiry  time.Time     `json:"token_expiry"`
-	ProxyURL     string        `json:"proxy_url,omitempty"` // Optional outbound proxy URL (e.g. Webshare http://user:pass@host:port)
-	IsActive     bool          `json:"is_active"`
-	Status       AccountStatus `json:"status"`
-	CreatedAt    time.Time     `json:"created_at"`
-	UpdatedAt    time.Time     `json:"updated_at"`
+	ID           string    `json:"id"`
+	Email        string    `json:"email"`
+	RefreshToken string    `json:"-"` // Omit credentials from JSON serialization for security
+	AccessToken  string    `json:"-"` // Omit credentials from JSON serialization for security
+	TokenExpiry  time.Time `json:"token_expiry"`
+	ProxyURL     string    `json:"proxy_url,omitempty"` // Optional outbound proxy URL (e.g. Webshare http://user:pass@host:port)
+	// AdsPowerProfileID links this account to the ADS Power browser profile it was onboarded
+	// through, so re-authentication reuses the same isolated profile + proxy. Empty for accounts
+	// onboarded outside ADS Power.
+	AdsPowerProfileID string        `json:"adspower_profile_id,omitempty"`
+	IsActive          bool          `json:"is_active"`
+	Status            AccountStatus `json:"status"`
+	CreatedAt         time.Time     `json:"created_at"`
+	UpdatedAt         time.Time     `json:"updated_at"`
 }
 
 // IsTokenExpired checks if the access token has expired or is within the safety margin.

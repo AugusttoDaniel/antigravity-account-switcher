@@ -46,8 +46,8 @@ func (r *AccountRepository) Create(ctx context.Context, acc *domain.Account) err
 	query := `
 		INSERT INTO accounts (
 			id, email, refresh_token, access_token, token_expiry,
-			proxy_url, is_active, status, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			proxy_url, adspower_profile_id, is_active, status, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 	_, err := r.db.ExecContext(ctx, query,
 		acc.ID,
@@ -56,6 +56,7 @@ func (r *AccountRepository) Create(ctx context.Context, acc *domain.Account) err
 		acc.AccessToken,
 		expiryStr,
 		acc.ProxyURL,
+		acc.AdsPowerProfileID,
 		acc.IsActive,
 		string(acc.Status),
 		acc.CreatedAt.Format(time.RFC3339),
@@ -74,7 +75,7 @@ func (r *AccountRepository) Create(ctx context.Context, acc *domain.Account) err
 // GetByID retrieves an account by ID.
 func (r *AccountRepository) GetByID(ctx context.Context, id string) (*domain.Account, error) {
 	query := `
-		SELECT id, email, refresh_token, access_token, token_expiry, proxy_url, is_active, status, created_at, updated_at
+		SELECT id, email, refresh_token, access_token, token_expiry, proxy_url, adspower_profile_id, is_active, status, created_at, updated_at
 		FROM accounts
 		WHERE id = ?
 	`
@@ -85,7 +86,7 @@ func (r *AccountRepository) GetByID(ctx context.Context, id string) (*domain.Acc
 // GetByEmail retrieves an account by email.
 func (r *AccountRepository) GetByEmail(ctx context.Context, email string) (*domain.Account, error) {
 	query := `
-		SELECT id, email, refresh_token, access_token, token_expiry, proxy_url, is_active, status, created_at, updated_at
+		SELECT id, email, refresh_token, access_token, token_expiry, proxy_url, adspower_profile_id, is_active, status, created_at, updated_at
 		FROM accounts
 		WHERE email = ?
 	`
@@ -96,7 +97,7 @@ func (r *AccountRepository) GetByEmail(ctx context.Context, email string) (*doma
 // GetActive retrieves the single currently active account.
 func (r *AccountRepository) GetActive(ctx context.Context) (*domain.Account, error) {
 	query := `
-		SELECT id, email, refresh_token, access_token, token_expiry, proxy_url, is_active, status, created_at, updated_at
+		SELECT id, email, refresh_token, access_token, token_expiry, proxy_url, adspower_profile_id, is_active, status, created_at, updated_at
 		FROM accounts
 		WHERE is_active = 1
 		LIMIT 1
@@ -112,7 +113,7 @@ func (r *AccountRepository) GetActive(ctx context.Context) (*domain.Account, err
 // List returns all accounts in the pool ordered by creation date.
 func (r *AccountRepository) List(ctx context.Context) ([]*domain.Account, error) {
 	query := `
-		SELECT id, email, refresh_token, access_token, token_expiry, proxy_url, is_active, status, created_at, updated_at
+		SELECT id, email, refresh_token, access_token, token_expiry, proxy_url, adspower_profile_id, is_active, status, created_at, updated_at
 		FROM accounts
 		ORDER BY created_at ASC
 	`
@@ -247,6 +248,27 @@ func (r *AccountRepository) UpdateProxyURL(ctx context.Context, id string, proxy
 	return nil
 }
 
+// UpdateAdsPowerProfileID links an account to the ADS Power profile it was onboarded through.
+// It is a concrete convenience on the SQLite repository (not part of domain.AccountRepository),
+// used by the ADS Power onboarding command.
+func (r *AccountRepository) UpdateAdsPowerProfileID(ctx context.Context, id string, profileID string) error {
+	nowStr := time.Now().UTC().Format(time.RFC3339)
+	res, err := r.db.ExecContext(ctx, "UPDATE accounts SET adspower_profile_id = ?, updated_at = ? WHERE id = ?", profileID, nowStr, id)
+	if err != nil {
+		return fmt.Errorf("failed to update adspower profile id: %w", err)
+	}
+
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return domain.ErrAccountNotFound
+	}
+
+	return nil
+}
+
 // Delete removes an account and cascades deletions to related buckets and metrics.
 func (r *AccountRepository) Delete(ctx context.Context, id string) error {
 	res, err := r.db.ExecContext(ctx, "DELETE FROM accounts WHERE id = ?", id)
@@ -269,7 +291,7 @@ func (r *AccountRepository) Delete(ctx context.Context, id string) error {
 // excluding the given account ID (for failover rotation).
 func (r *AccountRepository) GetNextAvailable(ctx context.Context, excludeID string) (*domain.Account, error) {
 	query := `
-		SELECT id, email, refresh_token, access_token, token_expiry, proxy_url, is_active, status, created_at, updated_at
+		SELECT id, email, refresh_token, access_token, token_expiry, proxy_url, adspower_profile_id, is_active, status, created_at, updated_at
 		FROM accounts
 		WHERE status = 'active'
 		  AND (? = '' OR id != ?)
@@ -300,6 +322,7 @@ func (r *AccountRepository) scanAccount(scanner rowScanner) (*domain.Account, er
 		&acc.AccessToken,
 		&expiryStr,
 		&acc.ProxyURL,
+		&acc.AdsPowerProfileID,
 		&isActiveInt,
 		&statusStr,
 		&createdStr,

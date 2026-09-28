@@ -364,7 +364,7 @@ func TestChallenger_Poller_TokenRefresh_And_401Retry(t *testing.T) {
 	_ = accRepo.Create(ctx, accProactive)
 
 	proactiveRefreshed := false
-	refresher := TokenRefresherFunc(func(ctx context.Context, rt string) (string, time.Time, error) {
+	refresher := TokenRefresherFunc(func(ctx context.Context, rt, _ string) (string, time.Time, error) {
 		if rt == "rt-proactive" {
 			proactiveRefreshed = true
 			return "fresh-token", now.Add(1 * time.Hour), nil

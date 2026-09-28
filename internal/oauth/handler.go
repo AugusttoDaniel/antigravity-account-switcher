@@ -321,6 +321,7 @@ type PendingAuth struct {
 	State        string
 	CodeVerifier string
 	RedirectURI  string
+	ProxyURL     string // Outbound proxy to egress the code exchange and userinfo through, if any.
 	CreatedAt    time.Time
 }
 
@@ -420,9 +421,11 @@ func DefaultBrowserOpener(targetURL string) error {
 // OAuthEngine defines the full interface for the OAuth2 subsystem.
 type OAuthEngine interface {
 	StartLoopbackFlow(ctx context.Context, opener BrowserOpener, urlLogger func(string)) (*domain.Account, error)
+	StartLoopbackFlowWithProxy(ctx context.Context, opener BrowserOpener, urlLogger func(string), proxyURL string) (*domain.Account, error)
 	BuildAuthURL(redirectURI, state, codeChallenge string) string
 	HandleCallbackRequest(r *http.Request) (*domain.Account, error)
 	RefreshToken(ctx context.Context, refreshToken string) (*TokenResponse, error)
+	RefreshTokenVia(ctx context.Context, refreshToken, proxyURL string) (*TokenResponse, error)
 	EnsureValidToken(ctx context.Context, acc *domain.Account, safetyMargin time.Duration) (*domain.Account, error)
 }
 
@@ -432,6 +435,13 @@ type OAuthService struct {
 	accountRepo domain.AccountRepository
 	stateStore  *StateStore
 	client      *http.Client
+
+	// proxyClients caches one *http.Client per distinct outbound proxy URL so that every
+	// OAuth exchange (code exchange, userinfo, token refresh) can egress through the same
+	// proxy as the account's data-plane traffic. Without this, token exchange and background
+	// refresh leak the operator's real IP even when the account has a proxy configured.
+	proxyMu      sync.RWMutex
+	proxyClients map[string]*http.Client
 
 	// idCandidates and secCandidates hold every client_id / client_secret discovered on the
 	// machine. The installed binary can embed more than one of each and their byte offsets do
@@ -497,9 +507,60 @@ func NewOAuthService(accountRepo domain.AccountRepository, opts ...Option) *OAut
 		accountRepo:   accountRepo,
 		stateStore:    NewStateStore(cfg.StateTTL),
 		client:        client,
+		proxyClients:  make(map[string]*http.Client),
 		idCandidates:  ids,
 		secCandidates: secs,
 	}
+}
+
+// clientForProxy returns an *http.Client whose transport egresses through proxyURL. An empty
+// proxyURL (or one that fails to parse) yields the default direct client, mirroring the
+// behaviour of the data-plane proxy handler so OAuth egress and API egress stay consistent.
+// Clients are cached per distinct proxy URL for the lifetime of the service.
+func (s *OAuthService) clientForProxy(proxyURL string) *http.Client {
+	proxyStr := strings.TrimSpace(proxyURL)
+	if proxyStr == "" {
+		return s.client
+	}
+
+	s.proxyMu.RLock()
+	if c, ok := s.proxyClients[proxyStr]; ok {
+		s.proxyMu.RUnlock()
+		return c
+	}
+	s.proxyMu.RUnlock()
+
+	parsedProxy, err := url.Parse(proxyStr)
+	if err != nil {
+		return s.client
+	}
+
+	s.proxyMu.Lock()
+	defer s.proxyMu.Unlock()
+	if c, ok := s.proxyClients[proxyStr]; ok {
+		return c
+	}
+
+	timeout := DefaultHTTPTimeout
+	if s.client != nil && s.client.Timeout > 0 {
+		timeout = s.client.Timeout
+	}
+
+	c := &http.Client{
+		Timeout: timeout,
+		Transport: &http.Transport{
+			Proxy:               http.ProxyURL(parsedProxy),
+			MaxIdleConns:        50,
+			MaxIdleConnsPerHost: 10,
+			IdleConnTimeout:     90 * time.Second,
+		},
+	}
+
+	if s.proxyClients == nil {
+		s.proxyClients = make(map[string]*http.Client)
+	}
+	s.proxyClients[proxyStr] = c
+	return c
 }
 
 func isLoopbackTokenEndpoint(u string) bool {
@@ -537,7 +598,17 @@ func (s *OAuthService) BuildAuthURL(redirectURI, state, codeChallenge string) st
 
 // StartLoopbackFlow initiates an ephemeral local listener on 127.0.0.1:0, generates PKCE & state,
 // launches the browser, exchanges code for credentials on callback, and returns the saved account.
+// The code exchange and userinfo lookup egress directly (operator IP).
 func (s *OAuthService) StartLoopbackFlow(ctx context.Context, opener BrowserOpener, urlLogger func(string)) (*domain.Account, error) {
+	return s.StartLoopbackFlowWithProxy(ctx, opener, urlLogger, "")
+}
+
+// StartLoopbackFlowWithProxy behaves like StartLoopbackFlow but routes the server-to-server code
+// exchange and userinfo lookup through proxyURL, so Google observes the proxy IP rather than the
+// operator's real IP for those calls. Note: the interactive consent screen still loads in the
+// browser opened by opener, which is not proxied here; isolating the browser itself is the job of
+// the antidetect-browser integration.
+func (s *OAuthService) StartLoopbackFlowWithProxy(ctx context.Context, opener BrowserOpener, urlLogger func(string), proxyURL string) (*domain.Account, error) {
 	if s.cfg.ClientID == "" || s.cfg.ClientSecret == "" {
 		return nil, errors.New("google oauth client credentials not found; please ensure Antigravity 2.0 is installed or set ANTIGRAVITY_CLIENT_ID and ANTIGRAVITY_CLIENT_SECRET")
 	}
@@ -565,6 +636,7 @@ func (s *OAuthService) StartLoopbackFlow(ctx context.Context, opener BrowserOpen
 		State:        state,
 		CodeVerifier: pkce.Verifier,
 		RedirectURI:  redirectURI,
+		ProxyURL:     strings.TrimSpace(proxyURL),
 		CreatedAt:    time.Now(),
 	})
 
@@ -669,12 +741,12 @@ func (s *OAuthService) HandleCallbackRequest(r *http.Request) (*domain.Account, 
 		return nil, errors.New("invalid, expired, or already consumed OAuth state parameter")
 	}
 
-	tokenResp, err := s.ExchangeCode(ctx, code, pending.CodeVerifier, pending.RedirectURI)
+	tokenResp, err := s.ExchangeCodeVia(ctx, code, pending.CodeVerifier, pending.RedirectURI, pending.ProxyURL)
 	if err != nil {
 		return nil, fmt.Errorf("token exchange failed: %w", err)
 	}
 
-	userInfo, err := s.FetchUserInfo(ctx, tokenResp.AccessToken)
+	userInfo, err := s.FetchUserInfoVia(ctx, tokenResp.AccessToken, pending.ProxyURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch userinfo: %w", err)
 	}
@@ -692,8 +764,14 @@ func (s *OAuthService) HandleCallbackRequest(r *http.Request) (*domain.Account, 
 	return account, nil
 }
 
-// ExchangeCode exchanges an authorization code and PKCE verifier for OAuth2 credentials.
+// ExchangeCode exchanges an authorization code and PKCE verifier for OAuth2 credentials,
+// egressing through the operator's direct connection.
 func (s *OAuthService) ExchangeCode(ctx context.Context, code, codeVerifier, redirectURI string) (*TokenResponse, error) {
+	return s.ExchangeCodeVia(ctx, code, codeVerifier, redirectURI, "")
+}
+
+// ExchangeCodeVia is ExchangeCode but egresses through proxyURL when non-empty.
+func (s *OAuthService) ExchangeCodeVia(ctx context.Context, code, codeVerifier, redirectURI, proxyURL string) (*TokenResponse, error) {
 	if s.cfg.ClientID == "" || s.cfg.ClientSecret == "" {
 		return nil, errors.New("google oauth client credentials not found; please ensure Antigravity 2.0 is installed or set ANTIGRAVITY_CLIENT_ID and ANTIGRAVITY_CLIENT_SECRET")
 	}
@@ -713,7 +791,7 @@ func (s *OAuthService) ExchangeCode(ctx context.Context, code, codeVerifier, red
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	resp, err := s.client.Do(req)
+	resp, err := s.clientForProxy(proxyURL).Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("token HTTP exchange failed: %w", err)
 	}
@@ -740,15 +818,21 @@ func (s *OAuthService) ExchangeCode(ctx context.Context, code, codeVerifier, red
 	return &tokenResp, nil
 }
 
-// FetchUserInfo queries the userinfo endpoint to obtain the primary email address.
+// FetchUserInfo queries the userinfo endpoint to obtain the primary email address,
+// egressing through the operator's direct connection.
 func (s *OAuthService) FetchUserInfo(ctx context.Context, accessToken string) (*UserInfoResponse, error) {
+	return s.FetchUserInfoVia(ctx, accessToken, "")
+}
+
+// FetchUserInfoVia is FetchUserInfo but egresses through proxyURL when non-empty.
+func (s *OAuthService) FetchUserInfoVia(ctx context.Context, accessToken, proxyURL string) (*UserInfoResponse, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.cfg.UserInfoURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create userinfo request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 
-	resp, err := s.client.Do(req)
+	resp, err := s.clientForProxy(proxyURL).Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("userinfo HTTP request failed: %w", err)
 	}
@@ -840,8 +924,16 @@ func (s *OAuthService) UpsertAccount(ctx context.Context, email, accessToken, re
 	return newAcc, nil
 }
 
-// RefreshToken exchanges a refresh token for fresh access credentials with Google.
+// RefreshToken exchanges a refresh token for fresh access credentials with Google,
+// egressing through the operator's direct connection.
 func (s *OAuthService) RefreshToken(ctx context.Context, refreshToken string) (*TokenResponse, error) {
+	return s.RefreshTokenVia(ctx, refreshToken, "")
+}
+
+// RefreshTokenVia is RefreshToken but egresses through proxyURL when non-empty. Background token
+// renewal (proxy handler, quota poller) passes the account's proxy so refreshes never leak the
+// operator's real IP for an account that is otherwise fully proxied.
+func (s *OAuthService) RefreshTokenVia(ctx context.Context, refreshToken, proxyURL string) (*TokenResponse, error) {
 	if refreshToken == "" {
 		return nil, errors.New("empty refresh token")
 	}
@@ -863,7 +955,7 @@ func (s *OAuthService) RefreshToken(ctx context.Context, refreshToken string) (*
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	resp, err := s.client.Do(req)
+	resp, err := s.clientForProxy(proxyURL).Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("token refresh HTTP request failed: %w", err)
 	}
@@ -908,7 +1000,7 @@ func (s *OAuthService) EnsureValidToken(ctx context.Context, acc *domain.Account
 		return acc, nil
 	}
 
-	tokenResp, err := s.RefreshToken(ctx, acc.RefreshToken)
+	tokenResp, err := s.RefreshTokenVia(ctx, acc.RefreshToken, acc.ProxyURL)
 	if err != nil {
 		if errors.Is(err, domain.ErrInvalidRefreshToken) {
 			_ = s.accountRepo.UpdateStatus(ctx, acc.ID, domain.AccountStatusError)
