@@ -18,6 +18,7 @@ import (
 	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/domain"
 	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/egress"
 	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/oauth"
+	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/onboard"
 	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/quota"
 )
 
@@ -43,6 +44,10 @@ type APIHandler struct {
 	// proxyCheckURL is the IP-echo endpoint proxy checks call through each proxy (default
 	// defaultProxyCheckURL; overridden in tests).
 	proxyCheckURL string
+	// profileAPIFactory builds the browser-profile API client (default: adspower.NewClient) and
+	// profileNavigate opens a URL in a profile's browser (default: adspower.Navigate); tests replace them.
+	profileAPIFactory func(baseURL, apiKey string) profileAPI
+	profileNavigate   onboard.Navigator
 }
 
 // SetConfig sets the configuration pointer for APIHandler.
@@ -577,6 +582,11 @@ type oauthStartRequest struct {
 	// default: that browser reaches Google from the real IP, so the link is returned instead, to
 	// be opened in a browser profile that uses the same proxy.
 	OpenBrowser bool `json:"open_browser"`
+	// Mode is "link" (the default: the sign-in link is returned) or "profile" (an isolated browser
+	// profile is created or reused, and its browser opens the sign-in page). ProfileID reuses an
+	// existing profile in "profile" mode.
+	Mode      string `json:"mode"`
+	ProfileID string `json:"profile_id"`
 }
 
 // HandleOAuthStart serves POST /oauth/start: it starts the Google sign-in for a new account.
@@ -623,6 +633,16 @@ func (a *APIHandler) HandleOAuthStart(w http.ResponseWriter, r *http.Request) {
 	}
 	maskedProxy, _ := egress.MaskProxyURL(proxyURL)
 
+	switch req.Mode {
+	case "", "link":
+	case "profile":
+		a.startProfileOnboarding(w, r, req, proxyURL, maskedProxy)
+		return
+	default:
+		writeErrorJSON(w, http.StatusBadRequest, "unknown mode", fmt.Errorf("mode %q: use \"link\" or \"profile\"", req.Mode))
+		return
+	}
+
 	var opener oauth.BrowserOpener
 	if !req.OpenBrowser {
 		opener = func(string) error { return nil } // the link is returned to the user instead
@@ -635,40 +655,15 @@ func (a *APIHandler) HandleOAuthStart(w http.ResponseWriter, r *http.Request) {
 			case urlChan <- authURL:
 			default:
 			}
-			if a.broadcaster != nil {
-				a.broadcaster.Broadcast(&domain.ProxyEvent{
-					Type:      domain.EventType("oauth_started"),
-					Message:   fmt.Sprintf("OAuth authorization flow initiated through %s", maskedProxy),
-					Timestamp: time.Now().UTC(),
-				})
-			}
+			a.broadcastOAuth("oauth_started", "", fmt.Sprintf("OAuth authorization flow initiated through %s", maskedProxy))
 		}, proxyURL)
 		if err == nil && acc != nil && a.accountRepo != nil {
 			// The exchange already went through the proxy; keep it for every later request.
-			err = a.accountRepo.UpdateProxyURL(context.Background(), acc.ID, proxyURL)
-			if err != nil {
-				err = fmt.Errorf("account %s was added but its proxy could not be saved: %w", acc.Email, err)
+			if uerr := a.accountRepo.UpdateProxyURL(context.Background(), acc.ID, proxyURL); uerr != nil {
+				err = fmt.Errorf("account %s was added but its proxy could not be saved: %w", acc.Email, uerr)
 			}
 		}
-		if a.broadcaster == nil {
-			return
-		}
-		if err != nil {
-			a.broadcaster.Broadcast(&domain.ProxyEvent{
-				Type:      domain.EventTypeError,
-				Message:   fmt.Sprintf("OAuth flow failed: %v", err),
-				Timestamp: time.Now().UTC(),
-			})
-			return
-		}
-		if acc != nil {
-			a.broadcaster.Broadcast(&domain.ProxyEvent{
-				Type:      domain.EventType("oauth_completed"),
-				AccountID: acc.ID,
-				Message:   fmt.Sprintf("Account %s added through %s", acc.Email, maskedProxy),
-				Timestamp: time.Now().UTC(),
-			})
-		}
+		a.finishOAuth(acc, err, maskedProxy)
 	}()
 
 	var generatedAuthURL string
@@ -679,6 +674,7 @@ func (a *APIHandler) HandleOAuthStart(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":         "started",
+		"mode":           "link",
 		"auth_url":       generatedAuthURL,
 		"proxy":          maskedProxy,
 		"browser_opened": req.OpenBrowser,

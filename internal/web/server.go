@@ -200,6 +200,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.api.HandleOmniRoute(w, r)
 		return
 	}
+	if path == "/api/onboarding/status" {
+		s.api.HandleOnboardingStatus(w, r)
+		return
+	}
 	if path == "/api/config" {
 		s.api.HandleConfig(w, r)
 		return

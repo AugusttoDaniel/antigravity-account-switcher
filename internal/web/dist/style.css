@@ -1712,3 +1712,11 @@ body.privacy-mode .blurred-email {
 .oauth-dialog-link { margin-top: 0.9rem; }
 .oauth-dialog-url-row { display: flex; gap: 0.5rem; }
 .oauth-dialog-url-row .text-input { flex: 1; min-width: 0; }
+.oauth-mode { border: 1px solid var(--border-default); border-radius: var(--radius-md); padding: 0.6rem 0.75rem 0.75rem; margin: 0 0 0.9rem; display: flex; flex-direction: column; gap: 0.5rem; }
+.oauth-mode legend { padding: 0 0.3rem; margin: 0; }
+.oauth-mode-option { display: flex; align-items: flex-start; gap: 0.5rem; font-size: 0.82rem; cursor: pointer; }
+.oauth-mode-option input { margin-top: 0.2rem; }
+.oauth-mode-option small { display: block; font-size: 0.72rem; color: var(--text-muted); margin-top: 0.1rem; overflow-wrap: anywhere; }
+.oauth-mode-option.is-unavailable { opacity: 0.6; cursor: not-allowed; }
+.oauth-mode-option small.is-error { color: var(--color-warning); }
+.oauth-mode #oauth-mode-recheck { align-self: flex-start; }

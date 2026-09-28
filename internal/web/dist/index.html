@@ -477,7 +477,23 @@
   <dialog id="oauth-dialog" class="proxy-dialog" aria-labelledby="oauth-dialog-title">
     <form id="oauth-dialog-form" method="dialog" novalidate>
       <h2 id="oauth-dialog-title" class="proxy-dialog-title">Add a Google account</h2>
-      <p class="proxy-dialog-current">The account signs in through its own proxy, which is saved on it. Open the sign-in link in a browser profile that uses the <strong>same proxy</strong>, so Google never sees your real IP.</p>
+      <p class="proxy-dialog-current">The account signs in through its own proxy, which is saved on it, so Google never sees your real IP.</p>
+      <fieldset class="oauth-mode">
+        <legend class="proxy-dialog-label">How do you want to sign in?</legend>
+        <label class="oauth-mode-option">
+          <input type="radio" name="oauth-mode" value="profile" id="oauth-mode-profile">
+          <span><strong>AliasMode profile</strong> (one click)
+            <small id="oauth-mode-profile-hint">Checking for AliasMode…</small>
+          </span>
+        </label>
+        <label class="oauth-mode-option">
+          <input type="radio" name="oauth-mode" value="link" id="oauth-mode-link">
+          <span><strong>Show the sign-in link</strong>
+            <small>You open it yourself, in a browser profile that uses the same proxy.</small>
+          </span>
+        </label>
+        <button type="button" id="oauth-mode-recheck" class="btn btn-xs btn-secondary">Check again</button>
+      </fieldset>
       <div id="oauth-dialog-pool" class="proxy-dialog-pool" hidden>
         <label for="oauth-dialog-pool-select" class="proxy-dialog-label">Proxy from the pool</label>
         <select id="oauth-dialog-pool-select" class="form-select mono"></select>
@@ -485,10 +501,10 @@
       </div>
       <label for="oauth-dialog-input" class="proxy-dialog-label">Proxy URL</label>
       <input id="oauth-dialog-input" class="proxy-dialog-input mono" type="text" autocomplete="off" spellcheck="false" placeholder="http://user:pass@host:port">
-      <label class="pool-check-label proxy-dialog-open"><input type="checkbox" id="oauth-dialog-open"> Also open the sign-in in this computer's default browser <em>(Google will see your real IP)</em></label>
+      <label class="pool-check-label proxy-dialog-open" id="oauth-dialog-open-wrap"><input type="checkbox" id="oauth-dialog-open"> Also open the sign-in in this computer's default browser <em>(Google will see your real IP)</em></label>
       <p id="oauth-dialog-error" class="proxy-dialog-error" role="alert" hidden></p>
       <div id="oauth-dialog-link" class="oauth-dialog-link" hidden>
-        <label for="oauth-dialog-url" class="proxy-dialog-label">Sign-in link: open it in the profile that uses this proxy</label>
+        <label for="oauth-dialog-url" id="oauth-dialog-url-label" class="proxy-dialog-label">Sign-in link: open it in the profile that uses this proxy</label>
         <div class="oauth-dialog-url-row">
           <input id="oauth-dialog-url" class="text-input mono" type="text" readonly>
           <button type="button" id="oauth-dialog-copy" class="btn btn-secondary">Copy link</button>

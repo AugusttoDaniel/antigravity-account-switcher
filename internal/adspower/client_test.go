@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -218,5 +219,39 @@ func TestThrottleSerializesCalls(t *testing.T) {
 		if gap := callTimes[i].Sub(callTimes[i-1]); gap < 50*time.Millisecond {
 			t.Errorf("calls %d/%d too close: %v (throttle not applied)", i-1, i, gap)
 		}
+	}
+}
+
+func TestPing_TriesBothStatusPaths(t *testing.T) {
+	for name, okPath := range map[string]string{"adspower": "/status", "aliasmode": "/api/v1/status"} {
+		t.Run(name, func(t *testing.T) {
+			c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != okPath {
+					http.NotFound(w, r)
+					return
+				}
+				_, _ = w.Write([]byte(`{"code":0,"msg":"success"}`))
+			})
+			if err := c.Ping(context.Background()); err != nil {
+				t.Fatalf("Ping: %v", err)
+			}
+		})
+	}
+	c := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) { http.NotFound(w, nil) })
+	if err := c.Ping(context.Background()); err == nil {
+		t.Error("expected an error when neither status path answers")
+	}
+}
+
+// The API key travels in the query string and Go's transport errors quote the whole URL, so a
+// failed request must not carry it into a message the dashboard shows.
+func TestRequestErrorsNeverCarryTheAPIKey(t *testing.T) {
+	c := NewClient(WithBaseURL("http://127.0.0.1:1"), WithAPIKey("super-secret-key"), WithMinInterval(0))
+	err := c.Ping(context.Background())
+	if err == nil {
+		t.Fatal("expected a connection error")
+	}
+	if strings.Contains(err.Error(), "super-secret-key") {
+		t.Errorf("error leaks the API key: %v", err)
 	}
 }

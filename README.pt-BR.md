@@ -179,11 +179,19 @@ A CLI disponibiliza comandos para supervisão, troca manual e configuração:
   antigravity-account-switcher add-account --no-browser
   ```
 - **Adicionar Conta Sem Vazar o Seu IP:** o botão **Authenticate New Google Account** do dashboard
-  pede primeiro o proxy da conta (do pool, ou digitado), faz a troca de tokens por ele, salva o
-  proxy na conta e mostra o link de login em vez de abrir o seu navegador padrão (esse navegador
-  chega ao Google pelo seu IP real). Abra o link num perfil de navegador que use o mesmo proxy. Pelo
-  terminal, `add-account --proxy <url>` faz o mesmo para a troca de tokens, e `add-account-adspower`
-  isola também a própria página de login.
+  pede primeiro o proxy da conta (do pool, ou digitado), faz a troca de tokens por ele e salva o
+  proxy na conta. Depois ele:
+  - **abre um perfil isolado do AliasMode / ADS Power** (um clique): o perfil é criado já ligado a
+    esse proxy, o navegador dele abre o Google e você faz o login dentro dessa janela. O dashboard
+    acha o AliasMode na porta padrão (`http://127.0.0.1:50400`) ou a do ADS Power; para apontar
+    outro endereço use `config set adspower_api_url <url>` (precisa ser nesta máquina, pois as
+    credenciais do proxy são enviadas a ele), e `adspower_api_key` e `adspower_engine` (padrão
+    `cloak`, Chromium) se precisar; ou
+  - **mostra o link de login** em vez de abrir o seu navegador padrão (esse navegador chega ao
+    Google pelo seu IP real), para você abrir num perfil de navegador que use o mesmo proxy.
+
+  Pelo terminal, `add-account --proxy <url>` faz o mesmo para a troca de tokens, e
+  `add-account-adspower` executa o fluxo com perfil.
 - **Especificar Porta Customizada:**
   ```bash
   antigravity-account-switcher launch --port 1831

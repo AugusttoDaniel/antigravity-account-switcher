@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -301,6 +302,23 @@ func (c *Client) StopBrowser(ctx context.Context, userID string) error {
 	return c.do(ctx, http.MethodGet, "/api/v1/browser/stop", q, nil, nil)
 }
 
+// Ping reports whether the Local API answers. ADS Power serves /status; the AliasMode-compatible
+// API serves it under /api/v1/status, so both are tried.
+func (c *Client) Ping(ctx context.Context) error {
+	var lastErr error
+	for _, path := range []string{"/status", "/api/v1/status"} {
+		err := c.do(ctx, http.MethodGet, path, nil, nil, nil)
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		if ctx.Err() != nil {
+			break
+		}
+	}
+	return lastErr
+}
+
 // BrowserActive reports whether the profile's browser is currently running.
 func (c *Client) BrowserActive(ctx context.Context, userID string) (bool, error) {
 	if strings.TrimSpace(userID) == "" {
@@ -377,7 +395,12 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("adspower: request failed (is ADS Power running with the Local API enabled?): %w", err)
+		// The transport error quotes the whole URL, and the API key travels in its query string.
+		var ue *url.Error
+		if errors.As(err, &ue) {
+			err = ue.Err
+		}
+		return fmt.Errorf("adspower: request failed (is ADS Power / AliasMode running with the Local API enabled?): %w", err)
 	}
 	defer resp.Body.Close()
 
