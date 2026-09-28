@@ -153,6 +153,7 @@ A CLI disponibiliza comandos para supervisão, troca manual e configuração:
 | `add-account` | Inicia o fluxo OAuth2 loopback (RFC 8252) no navegador para cadastrar uma nova conta Google. |
 | `add-account-adspower` | Cadastra uma conta através de um perfil isolado do ADS Power + proxy (login assistido). |
 | `import-adspower` | Cadastra em lote todos os perfis do ADS Power como contas, reusando o proxy de cada perfil. |
+| `export-omniroute` | Exporta as contas para o OmniRoute (arquivos de token agy e/ou a API dele), amarrando o proxy de cada conta. |
 | `set-account-proxy` | Define ou atualiza a URL de proxy de saída de uma conta específica. |
 | `list-accounts` | Exibe todas as contas cadastradas, qual está ativa e as porcentagens de cota. |
 | `refresh-quotas` | Força a sincronização imediata de cotas com o Google para todas as contas. |
@@ -211,6 +212,19 @@ Pré-requisito: ADS Power rodando localmente com a Local API habilitada (padrão
 
 > O login é **assistido**: o switcher abre o perfil isolado na tela de consentimento e você conclui
 > o login do Google (incluindo 2FA) dentro daquela janela. O switcher nunca armazena credenciais.
+
+### Exportando contas para o OmniRoute
+
+O comando `export-omniroute` envia as contas gerenciadas aqui para o
+[OmniRoute](https://github.com/diegosouzapw/OmniRoute) como conexões `agy`, dando refresh em cada
+conta pelo proxy dela antes. Pode gerar arquivos de token por conta para import manual:
+
+```bash
+antigravity-account-switcher export-omniroute --out ./omniroute-tokens
+```
+
+Também pode enviar direto para uma instância local do OmniRoute e amarrar o proxy de cada conta lá.
+Rode `antigravity-account-switcher export-omniroute --help` para as flags do modo API.
 
 ---
 

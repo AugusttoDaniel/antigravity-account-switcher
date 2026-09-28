@@ -153,6 +153,7 @@ The CLI provides commands for launch supervision, manual switching, and configur
 | `add-account` | Initiates RFC 8252 loopback OAuth2 flow to register a Google account. |
 | `add-account-adspower` | Onboards an account through an isolated ADS Power profile + proxy (assisted login). |
 | `import-adspower` | Batch-onboards every ADS Power profile as an account, reusing each profile's proxy. |
+| `export-omniroute` | Exports accounts to OmniRoute (agy token files and/or its API), binding each account's proxy. |
 | `set-account-proxy` | Assigns or updates the outbound proxy URL for a specific account. |
 | `list-accounts` | Displays all registered accounts, active status, and quota percentages. |
 | `refresh-quotas` | Forces an immediate live quota sync from Google for all registered accounts. |
@@ -210,6 +211,19 @@ Requirements: ADS Power running locally with its Local API enabled (default
 > Login is **assisted**: the switcher opens the isolated profile at the consent screen and you
 > complete the Google sign-in (including 2FA) inside that window. Credentials are never stored by
 > the switcher.
+
+### Exporting accounts to OmniRoute
+
+The `export-omniroute` command sends the accounts managed here into
+[OmniRoute](https://github.com/diegosouzapw/OmniRoute) as `agy` connections, refreshing each
+account through its own proxy first. It can write per-account token files for manual import:
+
+```bash
+antigravity-account-switcher export-omniroute --out ./omniroute-tokens
+```
+
+It can also push directly to a local OmniRoute instance and bind each account's proxy inside it.
+Run `antigravity-account-switcher export-omniroute --help` for the API-mode flags.
 - **Web Dashboard Privacy Mode:**
   Click the **Privacy** button in the dashboard header or press <kbd>P</kbd> to blur and redact all Google account email addresses across cards, active routing, and live proxy event logs for safe screenshots and screen-sharing.
 

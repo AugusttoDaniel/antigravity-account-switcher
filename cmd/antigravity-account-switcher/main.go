@@ -60,6 +60,8 @@ func main() {
 		runAddAccountAdsPower(args)
 	case "import-adspower":
 		runImportAdsPower(args)
+	case "export-omniroute":
+		runExportOmniRoute(args)
 	case "set-account-proxy":
 		runSetAccountProxy(args)
 	case "list-accounts":
@@ -93,6 +95,7 @@ func printUsage() {
 	fmt.Println("  add-account        Onboard a Google account via 1-click browser OAuth2 flow (--proxy supported)")
 	fmt.Println("  add-account-adspower  Onboard a Google account through an isolated ADS Power profile + proxy")
 	fmt.Println("  import-adspower    Batch-onboard every ADS Power profile as an account (reuses each profile's proxy)")
+	fmt.Println("  export-omniroute   Export accounts to OmniRoute (files and/or its API), binding each account's proxy")
 	fmt.Println("  set-account-proxy  Assign or update Webshare/outbound proxy URL for a specific account")
 	fmt.Println("  list-accounts      Display registered accounts, their proxy URLs, and quota availability")
 	fmt.Println("  refresh-quotas     Force live quota synchronization from Google for all accounts")
