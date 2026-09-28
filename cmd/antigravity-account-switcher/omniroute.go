@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/egress"
 	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/oauth"
 	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/omniroute"
 	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/store/sqlite"
@@ -29,7 +31,7 @@ func runExportOmniRoute(args []string) {
 	apiURL := fs.String("url", omniroute.DefaultBaseURL, "OmniRoute base URL (API mode)")
 	token := fs.String("token", os.Getenv("OMNIROUTE_TOKEN"), "OmniRoute management Bearer token (or env OMNIROUTE_TOKEN)")
 	insecure := fs.Bool("insecure", false, "Skip TLS verification (OmniRoute's self-signed localhost cert)")
-	assignProxies := fs.Bool("assign-proxies", true, "Bind each account's proxy in OmniRoute after import (API mode)")
+	assignProxies := fs.Bool("assign-proxies", true, "Bind each account's proxy on its OmniRoute connection (API mode), including accounts OmniRoute already has; only changes it when it differs, never removes one")
 	overwrite := fs.Bool("overwrite", false, "Overwrite an existing OmniRoute connection for the same account")
 	allowDuplicate := fs.Bool("allow-duplicate", false, "Import an account even if OmniRoute already has it through its own Antigravity login (creates a second connection)")
 	noRefresh := fs.Bool("no-refresh", false, "Do not refresh tokens before export (export may carry an expired access_token)")
@@ -102,7 +104,10 @@ func runExportOmniRoute(args []string) {
 				alreadyThere++
 				skipAPI = true
 				if strings.TrimSpace(*outDir) == "" {
-					continue // nothing else to do with it: do not even refresh its token
+					// Nothing to import or write, so do not refresh its token; it is kept only so
+					// its proxy can still be bound below.
+					items = append(items, exportItem{email: acc.Email, proxyURL: acc.ProxyURL, skipAPI: true})
+					continue
 				}
 			}
 		}
@@ -130,10 +135,6 @@ func runExportOmniRoute(args []string) {
 	}
 
 	if len(items) == 0 {
-		if alreadyThere > 0 {
-			fmt.Printf("OmniRoute import: 0 imported, %d already in OmniRoute (skipped), 0 failed.\n", alreadyThere)
-			return
-		}
 		fmt.Println("No accounts to export.")
 		return
 	}
@@ -163,14 +164,15 @@ func runExportOmniRoute(args []string) {
 
 	// ---- API mode ----
 	if *useAPI {
-		// Map email -> proxy for post-import proxy assignment.
+		// Map email -> proxy, for every account: the ones OmniRoute already has still get their
+		// proxy bound below.
 		proxyByEmail := make(map[string]string, len(items))
 		var entries []omniroute.AgyEntry
 		for _, it := range items {
+			proxyByEmail[strings.ToLower(it.email)] = it.proxyURL
 			if it.skipAPI {
 				continue
 			}
-			proxyByEmail[strings.ToLower(it.email)] = it.proxyURL
 			entries = append(entries, omniroute.AgyEntry{JSON: it.token, Name: it.email, Email: it.email})
 		}
 
@@ -204,64 +206,74 @@ func runExportOmniRoute(args []string) {
 		}
 		fmt.Printf("OmniRoute import: %d imported, %d already in OmniRoute (skipped), %d failed.\n", imported, alreadyThere, failed)
 
-		// ---- Per-connection proxy assignment ----
+		// ---- Per-connection proxy binding ----
 		if *assignProxies {
-			assigned, skipped := 0, 0
+			var targets []bindTarget
+			// Connections this import just created.
 			for _, conn := range allCreated {
 				key := strings.ToLower(conn.Email)
 				if key == "" {
 					key = strings.ToLower(conn.Name)
 				}
-				proxyURL := proxyByEmail[key]
-				if strings.TrimSpace(proxyURL) == "" {
-					continue // account has no proxy; nothing to bind
+				if conn.ID == "" || strings.TrimSpace(proxyByEmail[key]) == "" {
+					continue // no proxy to bind for this account
 				}
-				if conn.ID == "" {
-					skipped++
-					continue
-				}
-				cfg, ok, pErr := omniroute.ProxyConfigFromURL(proxyURL)
-				if pErr != nil || !ok {
-					fmt.Fprintf(os.Stderr, "  %s: bad proxy, not assigned: %v\n", conn.Email, pErr)
-					skipped++
-					continue
-				}
-				if aErr := client.AssignConnectionProxy(ctx, conn.ID, cfg); aErr != nil {
-					fmt.Fprintf(os.Stderr, "  %s: proxy assign failed: %v\n", conn.Email, aErr)
-					skipped++
-					continue
-				}
-				assigned++
+				targets = append(targets, bindTarget{email: key, connectionID: conn.ID, proxyURL: proxyByEmail[key]})
 			}
-			fmt.Printf("Proxy assignment: %d bound, %d skipped.\n", assigned, skipped)
+			// Connections OmniRoute already had: import never touched them, so bind them here.
+			for _, it := range items {
+				if !it.skipAPI || strings.TrimSpace(it.proxyURL) == "" {
+					continue
+				}
+				conns := existing.connectionsFor(it.email)
+				if len(conns) != 1 {
+					fmt.Fprintf(os.Stderr, "  %s: proxy not bound: OmniRoute holds %d connections for it, remove the duplicate first\n", it.email, len(conns))
+					continue
+				}
+				targets = append(targets, bindTarget{email: it.email, connectionID: conns[0].ID, proxyURL: it.proxyURL})
+			}
+			bound, unchanged, skipped := bindProxies(ctx, client, targets, os.Stdout, os.Stderr)
+			fmt.Printf("Proxy binding: %d bound, %d already in effect, %d skipped.\n", bound, unchanged, skipped)
 		}
 	}
 }
 
-// existingOmniRouteAccounts holds the lowercase emails OmniRoute already has, per Google provider.
+// existingOmniRouteAccounts holds the connections OmniRoute already has, by lowercase email, per
+// Google provider.
 type existingOmniRouteAccounts struct {
-	agy         map[string]bool // imported from here (agy-auth)
-	antigravity map[string]bool // connected through OmniRoute's own Antigravity login
+	agy         map[string][]omniroute.Connection // imported from here (agy-auth)
+	antigravity map[string][]omniroute.Connection // connected through OmniRoute's own Antigravity login
 }
 
 // fetchExistingOmniRouteAccounts lists the Google accounts OmniRoute already holds under both
 // providers it keeps them in.
 func fetchExistingOmniRouteAccounts(ctx context.Context, client *omniroute.Client) (existingOmniRouteAccounts, error) {
-	existing := existingOmniRouteAccounts{agy: map[string]bool{}, antigravity: map[string]bool{}}
-	for provider, set := range map[string]map[string]bool{"agy": existing.agy, "antigravity": existing.antigravity} {
+	existing := existingOmniRouteAccounts{agy: map[string][]omniroute.Connection{}, antigravity: map[string][]omniroute.Connection{}}
+	for provider, byEmail := range map[string]map[string][]omniroute.Connection{"agy": existing.agy, "antigravity": existing.antigravity} {
 		conns, err := client.ListConnections(ctx, provider)
 		if err != nil {
 			return existing, fmt.Errorf("list %s accounts: %w", provider, err)
 		}
 		for _, c := range conns {
+			keys := map[string]bool{}
 			for _, key := range []string{c.Email, c.Name} {
-				if k := strings.ToLower(strings.TrimSpace(key)); k != "" {
-					set[k] = true
+				if k := strings.ToLower(strings.TrimSpace(key)); k != "" && !keys[k] {
+					keys[k] = true
+					byEmail[k] = append(byEmail[k], c)
 				}
 			}
 		}
 	}
 	return existing, nil
+}
+
+// connectionsFor returns the OmniRoute connections of an account, preferring the agy ones.
+func (e existingOmniRouteAccounts) connectionsFor(email string) []omniroute.Connection {
+	key := strings.ToLower(strings.TrimSpace(email))
+	if cs := e.agy[key]; len(cs) > 0 {
+		return cs
+	}
+	return e.antigravity[key]
 }
 
 // skipExport decides whether exporting email would duplicate an account OmniRoute already has,
@@ -271,13 +283,48 @@ func fetchExistingOmniRouteAccounts(ctx context.Context, client *omniroute.Clien
 func skipExport(email string, existing existingOmniRouteAccounts, overwrite, allowDuplicate bool) (bool, string) {
 	key := strings.ToLower(strings.TrimSpace(email))
 	switch {
-	case existing.antigravity[key] && !allowDuplicate:
+	case len(existing.antigravity[key]) > 0 && !allowDuplicate:
 		return true, "already connected in OmniRoute through its own Antigravity login; importing would duplicate it (pass --allow-duplicate to import anyway)"
-	case existing.agy[key] && !overwrite:
+	case len(existing.agy[key]) > 0 && !overwrite:
 		return true, "already in OmniRoute (pass --overwrite to refresh its tokens there)"
 	default:
 		return false, ""
 	}
+}
+
+// bindTarget is one account whose local proxy should be in effect on its OmniRoute connection.
+type bindTarget struct {
+	email        string
+	connectionID string
+	proxyURL     string
+}
+
+// bindProxies makes each target's OmniRoute connection use the account's local proxy. It only
+// writes when they differ, so running it again changes nothing, and it never removes a proxy:
+// an account without a local proxy is not a target.
+func bindProxies(ctx context.Context, client *omniroute.Client, targets []bindTarget, out, errOut io.Writer) (bound, unchanged, skipped int) {
+	for _, t := range targets {
+		u, err := egress.ParseProxyURL(t.proxyURL)
+		if err != nil {
+			fmt.Fprintf(errOut, "  %s: proxy not bound: %v\n", t.email, err)
+			skipped++
+			continue
+		}
+		res, err := client.BindConnectionProxy(ctx, t.connectionID, u)
+		if err != nil {
+			fmt.Fprintf(errOut, "  %s: proxy not bound: %v\n", t.email, err)
+			skipped++
+			continue
+		}
+		if !res.Changed {
+			fmt.Fprintf(out, "  %s: proxy already in effect in OmniRoute (%s)\n", t.email, res.Was)
+			unchanged++
+			continue
+		}
+		fmt.Fprintf(out, "  %s: proxy bound in OmniRoute (was %s)\n", t.email, res.Was)
+		bound++
+	}
+	return bound, unchanged, skipped
 }
 
 // isAlreadyExistsError recognises OmniRoute's refusal to create a second agy connection for an
