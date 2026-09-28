@@ -104,14 +104,33 @@ func NewAPIHandler(
 	}
 }
 
+// AccountView is an account as the dashboard sees it. The stored proxy URL is replaced by a form
+// without credentials: the dashboard never needs the secret back, because editing replaces the
+// proxy wholesale. Its proxy_url field shadows the embedded domain.Account one in JSON.
+type AccountView struct {
+	*domain.Account
+	ProxyURL string `json:"proxy_url,omitempty"`
+	// ProxyInvalid marks a stored proxy that cannot be used, so the account's egress is blocked
+	// until it is fixed. Its value is withheld from ProxyURL entirely.
+	ProxyInvalid bool `json:"proxy_invalid,omitempty"`
+}
+
+func newAccountView(acc *domain.Account) *AccountView {
+	if acc == nil {
+		return nil
+	}
+	masked, ok := egress.MaskProxyURL(acc.ProxyURL)
+	return &AccountView{Account: acc, ProxyURL: masked, ProxyInvalid: !ok}
+}
+
 // StatusResponse represents server health and active account info.
 type StatusResponse struct {
-	Status        string          `json:"status"`
-	Version       string          `json:"version"`
-	UptimeSeconds int64           `json:"uptime_seconds"`
-	ActiveAccount *domain.Account `json:"active_account,omitempty"`
-	TotalAccounts int             `json:"total_accounts"`
-	Timestamp     time.Time       `json:"timestamp"`
+	Status        string       `json:"status"`
+	Version       string       `json:"version"`
+	UptimeSeconds int64        `json:"uptime_seconds"`
+	ActiveAccount *AccountView `json:"active_account,omitempty"`
+	TotalAccounts int          `json:"total_accounts"`
+	Timestamp     time.Time    `json:"timestamp"`
 }
 
 // HandleStatus serves GET /api/status.
@@ -136,7 +155,7 @@ func (a *APIHandler) HandleStatus(w http.ResponseWriter, r *http.Request) {
 		Status:        "ok",
 		Version:       a.version,
 		UptimeSeconds: int64(time.Since(a.startTime).Seconds()),
-		ActiveAccount: active,
+		ActiveAccount: newAccountView(active),
 		TotalAccounts: total,
 		Timestamp:     time.Now().UTC(),
 	}
@@ -144,9 +163,9 @@ func (a *APIHandler) HandleStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// AccountWithBuckets encapsulates an Account and its associated quota buckets.
+// AccountWithBuckets encapsulates an account view and its associated quota buckets.
 type AccountWithBuckets struct {
-	*domain.Account
+	*AccountView
 	Buckets []*domain.QuotaBucket `json:"buckets"`
 }
 
@@ -224,8 +243,8 @@ func (a *APIHandler) listAccounts(w http.ResponseWriter, r *http.Request) {
 			b = []*domain.QuotaBucket{}
 		}
 		result = append(result, &AccountWithBuckets{
-			Account: acc,
-			Buckets: b,
+			AccountView: newAccountView(acc),
+			Buckets:     b,
 		})
 	}
 
@@ -258,8 +277,8 @@ func (a *APIHandler) getAccount(w http.ResponseWriter, r *http.Request, id strin
 	}
 
 	writeJSON(w, http.StatusOK, &AccountWithBuckets{
-		Account: acc,
-		Buckets: buckets,
+		AccountView: newAccountView(acc),
+		Buckets:     buckets,
 	})
 }
 
@@ -299,7 +318,7 @@ func (a *APIHandler) updateAccountProxy(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	writeJSON(w, http.StatusOK, acc)
+	writeJSON(w, http.StatusOK, newAccountView(acc))
 }
 
 func (a *APIHandler) selectAccount(w http.ResponseWriter, r *http.Request, id string) {

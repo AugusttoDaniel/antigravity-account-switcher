@@ -388,15 +388,126 @@
     });
   }
 
-  function maskProxyURL(str) {
-    if (!str) return 'Direct Connection (No Outbound Proxy)';
-    try {
-      const u = new URL(str);
-      if (u.password) u.password = '••••';
-      return u.toString();
-    } catch (e) {
-      return str;
+  // The API already strips proxy credentials (proxy_url is masked server-side and an unusable
+  // value is withheld entirely), so this only chooses the label to show.
+  function describeProxy(acc) {
+    if (acc.proxy_invalid) {
+      return { text: 'Invalid proxy URL — traffic blocked until fixed', invalid: true };
     }
+    if (!acc.proxy_url) {
+      return { text: 'Direct Connection (No Outbound Proxy)', invalid: false };
+    }
+    return { text: acc.proxy_url, invalid: false };
+  }
+
+  // Extracts the most useful message from an API error body ({ error: { message, detail } }).
+  async function apiErrorMessage(res) {
+    try {
+      const data = await res.json();
+      return data.error?.detail || data.error?.message || res.statusText;
+    } catch (e) {
+      return res.statusText;
+    }
+  }
+
+  // =========================================================================
+  // Outbound Proxy Editor (native <dialog>)
+  // =========================================================================
+
+  const proxyDialog = {
+    el: document.getElementById('proxy-dialog'),
+    form: document.getElementById('proxy-dialog-form'),
+    account: document.getElementById('proxy-dialog-account'),
+    current: document.getElementById('proxy-dialog-current'),
+    input: document.getElementById('proxy-dialog-input'),
+    error: document.getElementById('proxy-dialog-error'),
+    save: document.getElementById('proxy-dialog-save'),
+    remove: document.getElementById('proxy-dialog-remove'),
+    cancel: document.getElementById('proxy-dialog-cancel'),
+    acc: null,
+    busy: false,
+  };
+
+  function setProxyDialogError(message) {
+    proxyDialog.error.textContent = message || '';
+    proxyDialog.error.hidden = !message;
+    proxyDialog.input.setAttribute('aria-invalid', message ? 'true' : 'false');
+  }
+
+  function setProxyDialogBusy(busy) {
+    proxyDialog.busy = busy;
+    proxyDialog.save.disabled = busy || proxyDialog.input.value.trim() === '';
+    proxyDialog.remove.disabled = busy;
+    proxyDialog.cancel.disabled = busy;
+    proxyDialog.input.disabled = busy;
+  }
+
+  function openProxyDialog(acc) {
+    if (!proxyDialog.el) return;
+    proxyDialog.acc = acc;
+    const current = describeProxy(acc);
+    proxyDialog.account.textContent = isPrivacyMode ? '[Protected in Privacy Mode]' : acc.email;
+    proxyDialog.current.textContent = current.text;
+    proxyDialog.current.classList.toggle('is-invalid', current.invalid);
+    // Removing only makes sense when something is configured (valid or not).
+    proxyDialog.remove.hidden = !acc.proxy_url && !acc.proxy_invalid;
+    proxyDialog.input.value = '';
+    setProxyDialogError('');
+    setProxyDialogBusy(false);
+    proxyDialog.el.showModal();
+    proxyDialog.input.focus();
+  }
+
+  async function submitProxy(proxyURL) {
+    const acc = proxyDialog.acc;
+    if (!acc || proxyDialog.busy) return;
+    setProxyDialogError('');
+    setProxyDialogBusy(true);
+    try {
+      const res = await fetch(`/api/accounts/${encodeURIComponent(acc.id)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ proxy_url: proxyURL })
+      });
+      if (!res.ok) {
+        // Keep the dialog open so the value can be corrected in place.
+        setProxyDialogError(await apiErrorMessage(res));
+        return;
+      }
+      proxyDialog.el.close();
+      showToast(proxyURL ? 'Outbound proxy updated' : 'Proxy removed — account now connects directly', 'success', 2500);
+      fetchAccounts();
+    } catch (err) {
+      setProxyDialogError(`Network error: ${err.message}`);
+    } finally {
+      setProxyDialogBusy(false);
+      // Disabling the focused input while busy dropped focus to <body>; hand it back (with the
+      // value selected) so the entry can be corrected straight away.
+      if (proxyDialog.el.open) {
+        proxyDialog.input.focus();
+        proxyDialog.input.select();
+      }
+    }
+  }
+
+  if (proxyDialog.el) {
+    proxyDialog.input.addEventListener('input', () => {
+      setProxyDialogError('');
+      proxyDialog.save.disabled = proxyDialog.busy || proxyDialog.input.value.trim() === '';
+    });
+    proxyDialog.form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const value = proxyDialog.input.value.trim();
+      if (value) submitProxy(value);
+    });
+    proxyDialog.remove.addEventListener('click', () => submitProxy(''));
+    proxyDialog.cancel.addEventListener('click', () => proxyDialog.el.close());
+    // Never leave a typed credential sitting in the DOM after the dialog closes.
+    proxyDialog.el.addEventListener('close', () => {
+      proxyDialog.input.value = '';
+      proxyDialog.acc = null;
+      setProxyDialogError('');
+    });
   }
 
   function createAccountCard(acc) {
@@ -538,6 +649,7 @@
     else if (acc.status === 'error') statusBadgeClass = 'badge-danger';
 
     const cardTitle = isPrivacyMode ? '[Protected in Privacy Mode]' : escapeHtml(acc.email);
+    const proxyInfo = describeProxy(acc);
     const copyTitle = isPrivacyMode ? 'Copy redacted email' : 'Copy email address';
 
     card.innerHTML = `
@@ -560,12 +672,12 @@
         </div>
       </div>
 
-      <div class="proxy-info-row" style="padding: 0.4rem 0.6rem; margin-bottom: 0.5rem; background: rgba(0,0,0,0.15); border-radius: 6px; font-size: 0.72rem; display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;">
-        <span style="font-family: monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--color-text-secondary);" title="${escapeHtml(acc.proxy_url || '')}">
-          🌐 ${escapeHtml(maskProxyURL(acc.proxy_url))}
+      <div class="proxy-info-row${proxyInfo.invalid ? ' is-invalid' : ''}" style="padding: 0.4rem 0.6rem; margin-bottom: 0.5rem; background: rgba(0,0,0,0.15); border-radius: 6px; font-size: 0.72rem; display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;">
+        <span class="proxy-label" style="font-family: monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${escapeHtml(proxyInfo.text)}">
+          ${proxyInfo.invalid ? '⚠️' : '🌐'} ${escapeHtml(proxyInfo.text)}
         </span>
-        <button class="btn btn-xs btn-secondary btn-edit-proxy" data-id="${escapeHtml(acc.id)}" data-email="${escapeHtml(acc.email)}" data-proxy="${escapeHtml(acc.proxy_url || '')}" title="Set Webshare / Outbound Proxy">
-          Edit Proxy
+        <button class="btn btn-xs btn-secondary btn-edit-proxy" data-id="${escapeHtml(acc.id)}" title="Set Webshare / Outbound Proxy">
+          ${proxyInfo.invalid ? 'Fix Proxy' : 'Edit Proxy'}
         </button>
       </div>
 
@@ -604,28 +716,9 @@
     // Bind edit proxy
     const editProxyBtn = card.querySelector('.btn-edit-proxy');
     if (editProxyBtn) {
-      editProxyBtn.addEventListener('click', async (e) => {
+      editProxyBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        const currentProxy = acc.proxy_url || '';
-        const displayAccount = isPrivacyMode ? '[redacted@email.com]' : acc.email;
-        const newProxy = prompt(`Set Webshare / Outbound Proxy for ${displayAccount}:\n\nExample: http://usr123-session-acc1:pass@p.webshare.io:80\n\nLeave empty for Direct connection (no proxy):`, currentProxy);
-        if (newProxy === null) return;
-        try {
-          const res = await fetch(`/api/accounts/${acc.id}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ proxy_url: newProxy.trim() })
-          });
-          if (res.ok) {
-            showToast('Outbound proxy updated successfully', 'success', 2500);
-            fetchAccounts();
-          } else {
-            const errData = await res.json();
-            showToast(`Failed to set proxy: ${errData.message || res.statusText}`, 'error', 3500);
-          }
-        } catch (err) {
-          showToast(`Error updating proxy: ${err.message}`, 'error', 3500);
-        }
+        openProxyDialog(acc);
       });
     }
 
