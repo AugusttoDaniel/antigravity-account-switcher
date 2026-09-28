@@ -443,6 +443,12 @@ type OAuthService struct {
 	proxyMu      sync.RWMutex
 	proxyClients map[string]*http.Client
 
+	// cachedSecret holds the client_secret the pairing probe (ExchangeCodeVia / RefreshTokenVia)
+	// discovered at runtime. It is guarded by secretMu because concurrent onboarding and background
+	// refresh calls share one OAuthService, so the cfg is never mutated after construction.
+	secretMu     sync.RWMutex
+	cachedSecret string
+
 	// idCandidates and secCandidates hold every client_id / client_secret discovered on the
 	// machine. The installed binary can embed more than one of each and their byte offsets do
 	// not reveal the correct pairing, so when more than one candidate exists the pairing is
@@ -791,7 +797,7 @@ func (s *OAuthService) ExchangeCodeVia(ctx context.Context, code, codeVerifier, 
 	for _, secret := range secrets {
 		tokenResp, invalidClient, err := s.exchangeOnce(ctx, code, codeVerifier, redirectURI, secret, proxyURL)
 		if err == nil {
-			s.cfg.ClientSecret = secret // remember the working pair for refreshes
+			s.rememberSecret(secret) // remember the working pair for refreshes
 			return tokenResp, nil
 		}
 		lastErr = err
@@ -806,19 +812,32 @@ func (s *OAuthService) ExchangeCodeVia(ctx context.Context, code, codeVerifier, 
 // candidateSecrets returns every discovered client_secret to try, with the currently-configured
 // one first so a known-good pairing is not re-probed.
 func (s *OAuthService) candidateSecrets() []string {
+	s.secretMu.RLock()
+	cached := s.cachedSecret
+	s.secretMu.RUnlock()
+
 	seen := map[string]bool{}
-	out := make([]string, 0, len(s.secCandidates)+1)
+	out := make([]string, 0, len(s.secCandidates)+2)
 	add := func(v string) {
 		if v != "" && !seen[v] {
 			seen[v] = true
 			out = append(out, v)
 		}
 	}
-	add(s.cfg.ClientSecret)
+	add(cached)             // the probe's last known-good secret, tried first
+	add(s.cfg.ClientSecret) // cfg is write-once at construction, so this read is race-free
 	for _, sec := range s.secCandidates {
 		add(sec)
 	}
 	return out
+}
+
+// rememberSecret caches the client_secret that the pairing probe found to work, so subsequent
+// exchanges and refreshes try it first. Guarded because the OAuthService is shared across goroutines.
+func (s *OAuthService) rememberSecret(secret string) {
+	s.secretMu.Lock()
+	s.cachedSecret = secret
+	s.secretMu.Unlock()
 }
 
 // exchangeOnce performs a single authorization-code exchange with the given client_secret. It
@@ -1006,7 +1025,7 @@ func (s *OAuthService) RefreshTokenVia(ctx context.Context, refreshToken, proxyU
 	for _, secret := range secrets {
 		tokenResp, invalidClient, err := s.refreshOnce(ctx, refreshToken, secret, proxyURL)
 		if err == nil {
-			s.cfg.ClientSecret = secret
+			s.rememberSecret(secret)
 			return tokenResp, nil
 		}
 		lastErr = err

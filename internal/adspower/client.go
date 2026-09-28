@@ -184,11 +184,15 @@ type Profile struct {
 
 // CreateProfileRequest describes a new isolated profile to create.
 type CreateProfileRequest struct {
-	Name        string      `json:"name"`
-	GroupID     string      `json:"group_id"`
+	Name    string `json:"name"`
+	GroupID string `json:"group_id"`
+	// Browser selects the engine. The AliasMode-compatible API requires it ("cloak" = Chromium /
+	// CloakBrowser, which exposes a CDP endpoint; "firefox" = AliasMode Firefox). ADS Power ignores
+	// the field (it uses SunBrowser). Empty is omitted.
+	Browser     string      `json:"browser,omitempty"`
 	ProxyConfig ProxyConfig `json:"user_proxy_config"`
-	// FingerprintConfig is passed through as-is; an empty map lets ADS Power auto-generate
-	// a random fingerprint, which is what we want for a fresh account.
+	// FingerprintConfig is passed through as-is; an empty map lets the browser auto-generate a
+	// random fingerprint, which is what we want for a fresh account.
 	FingerprintConfig map[string]any `json:"fingerprint_config,omitempty"`
 }
 
