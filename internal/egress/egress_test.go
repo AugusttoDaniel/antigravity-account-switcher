@@ -341,3 +341,119 @@ func TestDial_UnsupportedScheme(t *testing.T) {
 		t.Fatalf("expected ErrInvalidProxy, got %v", err)
 	}
 }
+
+func TestParseProxyLine(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"http://alice:s3cret@proxy.example:8080", "http://alice:s3cret@proxy.example:8080"},
+		{"socks5://10.0.0.1:1080", "socks5://10.0.0.1:1080"},
+		{"1.2.3.4:8080:alice:s3cret", "http://alice:s3cret@1.2.3.4:8080"},
+		{"1.2.3.4:8080:alice:pa:ss", "http://alice:pa%3Ass@1.2.3.4:8080"}, // ':' inside the password
+		{"  1.2.3.4:3128  ", "http://1.2.3.4:3128"},                       // bare host:port
+	}
+	for _, c := range cases {
+		u, err := ParseProxyLine(c.in)
+		if err != nil {
+			t.Errorf("ParseProxyLine(%q): %v", c.in, err)
+			continue
+		}
+		if u.String() != c.want {
+			t.Errorf("ParseProxyLine(%q) = %q, want %q", c.in, u.String(), c.want)
+		}
+	}
+	// The password with ':' must survive the round trip intact.
+	if u, _ := ParseProxyLine("1.2.3.4:8080:alice:pa:ss"); u != nil {
+		if pw, _ := u.User.Password(); pw != "pa:ss" {
+			t.Errorf("password with ':' decoded as %q", pw)
+		}
+	}
+
+	invalid := []string{
+		"",
+		"just-a-host",
+		"1.2.3.4:8080:alice",        // three fields
+		"1.2.3.4:8080::s3cretPW",    // empty user
+		"1.2.3.4:notaport:alice:pw", // bad port
+		"ftp://alice:s3cretPW@host:21",
+	}
+	for _, in := range invalid {
+		_, err := ParseProxyLine(in)
+		if !errors.Is(err, ErrInvalidProxy) {
+			t.Errorf("ParseProxyLine(%q): expected ErrInvalidProxy, got %v", in, err)
+			continue
+		}
+		if strings.Contains(err.Error(), "s3cretPW") || strings.Contains(err.Error(), "alice") {
+			t.Errorf("ParseProxyLine(%q) error leaks credentials: %v", in, err)
+		}
+	}
+}
+
+// forwardingConnectProxy is a working HTTP CONNECT proxy: it checks Basic credentials, dials the
+// requested target and pipes bytes both ways.
+func forwardingConnectProxy(t *testing.T, user, pass string) string {
+	want := "Basic " + base64.StdEncoding.EncodeToString([]byte(user+":"+pass))
+	return startListener(t, func(c net.Conn) {
+		br := bufio.NewReader(c)
+		req, err := http.ReadRequest(br)
+		if err != nil {
+			return
+		}
+		if req.Header.Get("Proxy-Authorization") != want {
+			_, _ = c.Write([]byte("HTTP/1.1 407 Proxy Authentication Required\r\nContent-Length: 0\r\n\r\n"))
+			return
+		}
+		dst, err := net.Dial("tcp", req.Host)
+		if err != nil {
+			_, _ = c.Write([]byte("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n"))
+			return
+		}
+		defer dst.Close()
+		_, _ = c.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
+		go func() { _, _ = io.Copy(dst, br) }()
+		_, _ = io.Copy(c, dst)
+	})
+}
+
+func echoIPServer(t *testing.T, body string) string {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, body)
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL
+}
+
+func TestCheck_ReportsExitIPThroughProxy(t *testing.T) {
+	proxy := &url.URL{Scheme: "http", Host: forwardingConnectProxy(t, "alice", "s3cretPW"), User: url.UserPassword("alice", "s3cretPW")}
+	got, err := Check(context.Background(), proxy, echoIPServer(t, "203.0.113.9\n"))
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if got.ExitIP != "203.0.113.9" {
+		t.Errorf("exit IP = %q, want 203.0.113.9", got.ExitIP)
+	}
+	if got.Latency <= 0 {
+		t.Errorf("latency not measured: %v", got.Latency)
+	}
+}
+
+func TestCheck_FailuresNeverLeakCredentials(t *testing.T) {
+	echo := echoIPServer(t, "203.0.113.9")
+	cases := map[string]*url.URL{
+		"wrong password": {Scheme: "http", Host: forwardingConnectProxy(t, "alice", "right"), User: url.UserPassword("alice", "s3cretPW")},
+		"proxy down":     {Scheme: "http", Host: "127.0.0.1:1", User: url.UserPassword("alice", "s3cretPW")},
+	}
+	for name, proxy := range cases {
+		_, err := Check(context.Background(), proxy, echo)
+		if err == nil {
+			t.Errorf("%s: expected an error", name)
+			continue
+		}
+		if strings.Contains(err.Error(), "s3cretPW") || strings.Contains(err.Error(), "alice") {
+			t.Errorf("%s: error leaks credentials: %v", name, err)
+		}
+	}
+
+	proxy := &url.URL{Scheme: "http", Host: forwardingConnectProxy(t, "alice", "s3cretPW"), User: url.UserPassword("alice", "s3cretPW")}
+	if _, err := Check(context.Background(), proxy, echoIPServer(t, "<html>captive portal</html>")); err == nil {
+		t.Error("a non-IP answer (e.g. a captive portal) must fail the check")
+	}
+}

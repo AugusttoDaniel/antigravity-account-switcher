@@ -16,6 +16,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -99,9 +100,10 @@ type AgyEntry struct {
 
 // Connection is the subset of an imported provider connection returned by the import.
 type Connection struct {
-	ID    string `json:"id"`
-	Name  string `json:"name"`
-	Email string `json:"email"`
+	Provider string `json:"provider,omitempty"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Email    string `json:"email"`
 }
 
 // ImportError is one failed bulk entry.
@@ -205,6 +207,184 @@ func (c *Client) AssignConnectionProxy(ctx context.Context, connectionID string,
 		"proxy": proxy,
 	}
 	return c.do(ctx, http.MethodPut, "/api/settings/proxy", body, nil)
+}
+
+// RegistryProxy is one entry for OmniRoute's proxy registry.
+type RegistryProxy struct {
+	Name     string `json:"name"`
+	Type     string `json:"type"`
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
+	Username string `json:"username,omitempty"`
+	Password string `json:"password,omitempty"`
+	Region   string `json:"region,omitempty"`
+}
+
+// RegistryProxyFromURL maps a validated proxy URL onto a registry entry. Names follow the
+// "ws-<host>" convention of the existing import script; OmniRoute upserts by host and port.
+func RegistryProxyFromURL(u *url.URL, region string) (RegistryProxy, error) {
+	port, err := strconv.Atoi(u.Port())
+	if err != nil {
+		return RegistryProxy{}, fmt.Errorf("omniroute: proxy needs an explicit port")
+	}
+	typ := u.Scheme
+	if typ == "socks5h" {
+		typ = "socks5"
+	}
+	p := RegistryProxy{Name: "ws-" + u.Hostname(), Type: typ, Host: u.Hostname(), Port: port, Region: strings.TrimSpace(region)}
+	if u.User != nil {
+		p.Username = u.User.Username()
+		p.Password, _ = u.User.Password()
+	}
+	return p, nil
+}
+
+// MaxBulkProxies is OmniRoute's per-request cap for the proxy bulk import.
+const MaxBulkProxies = 100
+
+// BulkProxyResult is the outcome for one proxy of a bulk import.
+type BulkProxyResult struct {
+	Success bool   `json:"success"`
+	Action  string `json:"action,omitempty"` // "created" or "updated"
+	ID      string `json:"id,omitempty"`
+	Error   string `json:"error,omitempty"`
+}
+
+// BulkImportProxies upserts proxies into OmniRoute's registry via POST
+// /api/settings/proxies/bulk-import, keyed by host+port+username: an existing proxy is updated
+// instead of duplicated, and its result says so ("updated"). (POST /api/v1/management/proxies
+// always inserts, so re-sending through it duplicates entries.) Results come back one per input,
+// in order; the token needs management scope. On error, the results of the chunks that already
+// succeeded are still returned, since OmniRoute has applied them.
+func (c *Client) BulkImportProxies(ctx context.Context, proxies []RegistryProxy) ([]BulkProxyResult, error) {
+	out := make([]BulkProxyResult, 0, len(proxies))
+	for start := 0; start < len(proxies); start += MaxBulkProxies {
+		chunk := proxies[start:min(start+MaxBulkProxies, len(proxies))]
+		var resp struct {
+			Results []BulkProxyResult `json:"results"`
+		}
+		if err := c.do(ctx, http.MethodPost, "/api/settings/proxies/bulk-import", map[string]any{"items": chunk}, &resp); err != nil {
+			return out, scrubPasswords(err, chunk)
+		}
+		if len(resp.Results) != len(chunk) {
+			return out, fmt.Errorf("omniroute: bulk import returned %d results for %d proxies", len(resp.Results), len(chunk))
+		}
+		for i := range resp.Results {
+			resp.Results[i].Error = scrubPasswords(errors.New(resp.Results[i].Error), chunk).Error()
+		}
+		out = append(out, resp.Results...)
+	}
+	return out, nil
+}
+
+// scrubPasswords removes the proxies' passwords from err's text: do() quotes response bodies,
+// which may echo the request back.
+func scrubPasswords(err error, proxies []RegistryProxy) error {
+	msg := err.Error()
+	for _, p := range proxies {
+		if p.Password != "" {
+			msg = strings.ReplaceAll(msg, p.Password, "***")
+		}
+	}
+	return errors.New(msg)
+}
+
+// RegistryEntry is a proxy as OmniRoute lists it. The server redacts credentials (username and
+// password come back as "***"), so entries can only be matched by host and port.
+type RegistryEntry struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Type   string `json:"type"`
+	Host   string `json:"host"`
+	Port   int    `json:"port"`
+	Status string `json:"status"`
+}
+
+// listPageSize is the largest page OmniRoute's list endpoints serve.
+const listPageSize = 200
+
+// ListProxies returns every entry of OmniRoute's proxy registry (GET /api/v1/management/proxies).
+func (c *Client) ListProxies(ctx context.Context) ([]RegistryEntry, error) {
+	var all []RegistryEntry
+	for offset := 0; ; {
+		var resp struct {
+			Items []RegistryEntry `json:"items"`
+			Page  struct {
+				Total int `json:"total"`
+			} `json:"page"`
+		}
+		path := fmt.Sprintf("/api/v1/management/proxies?limit=%d&offset=%d", listPageSize, offset)
+		if err := c.do(ctx, http.MethodGet, path, nil, &resp); err != nil {
+			return nil, err
+		}
+		all = append(all, resp.Items...)
+		offset += len(resp.Items)
+		if len(resp.Items) == 0 || offset >= resp.Page.Total {
+			return all, nil
+		}
+	}
+}
+
+// ListConnections returns the provider connections of one provider (GET /api/providers). The
+// server strips tokens; only identity fields are decoded here.
+func (c *Client) ListConnections(ctx context.Context, provider string) ([]Connection, error) {
+	var all []Connection
+	for offset := 0; ; {
+		var resp struct {
+			Connections []Connection `json:"connections"`
+			Total       int          `json:"total"`
+		}
+		path := fmt.Sprintf("/api/providers?provider=%s&limit=%d&offset=%d", url.QueryEscape(provider), listPageSize, offset)
+		if err := c.do(ctx, http.MethodGet, path, nil, &resp); err != nil {
+			return nil, err
+		}
+		all = append(all, resp.Connections...)
+		offset += len(resp.Connections)
+		if len(resp.Connections) == 0 || offset >= resp.Total {
+			return all, nil
+		}
+	}
+}
+
+// ResolvedProxy is the proxy OmniRoute effectively uses for a connection, and the level it comes
+// from: "account"/"key" (bound to that connection), "provider" or "global" (inherited, shared with
+// other connections), "apiKey", or "direct" (no proxy). The password is not decoded; the username is, since proxies sharing a gateway
+// endpoint differ only by it.
+type ResolvedProxy struct {
+	Level string `json:"level"`
+	Proxy *struct {
+		Type     string   `json:"type"`
+		Host     string   `json:"host"`
+		Port     flexPort `json:"port"`
+		Username string   `json:"username"`
+	} `json:"proxy"`
+}
+
+// ResolveConnectionProxy asks OmniRoute which proxy a connection would use right now
+// (GET /api/v1/management/proxies/assignments?resolve_connection_id=...), accounting for the
+// registry and the legacy per-key settings alike.
+func (c *Client) ResolveConnectionProxy(ctx context.Context, connectionID string) (ResolvedProxy, error) {
+	var out ResolvedProxy
+	path := "/api/v1/management/proxies/assignments?resolve_connection_id=" + url.QueryEscape(connectionID)
+	err := c.do(ctx, http.MethodGet, path, nil, &out)
+	return out, err
+}
+
+// flexPort accepts a port encoded as a JSON number or string (legacy settings store either).
+type flexPort int
+
+func (p *flexPort) UnmarshalJSON(b []byte) error {
+	s := strings.Trim(string(b), `"`)
+	if s == "" || s == "null" {
+		*p = 0
+		return nil
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return fmt.Errorf("omniroute: invalid port %q", s)
+	}
+	*p = flexPort(n)
+	return nil
 }
 
 func (c *Client) do(ctx context.Context, method, path string, body, out any) error {

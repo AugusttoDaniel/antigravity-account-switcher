@@ -1623,7 +1623,8 @@ body.privacy-mode .blurred-email {
 .proxy-dialog-current { margin: 0 0 1rem; font-size: 0.78rem; color: var(--text-muted); overflow-wrap: anywhere; }
 .proxy-dialog-current .is-invalid { color: var(--color-warning); }
 .proxy-dialog-label { display: block; margin-bottom: 0.35rem; font-size: 0.78rem; color: var(--text-secondary); }
-.proxy-dialog-input {
+.proxy-dialog-input,
+.text-input {
   width: 100%;
   box-sizing: border-box;
   padding: 0.6rem 0.75rem;
@@ -1635,7 +1636,8 @@ body.privacy-mode .blurred-email {
   font-size: 0.85rem;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
-.proxy-dialog-input:focus { outline: none; border-color: var(--border-focus); box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.2); }
+.proxy-dialog-input:focus,
+.text-input:focus { outline: none; border-color: var(--border-focus); box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.2); }
 .proxy-dialog-input[aria-invalid="true"] { border-color: var(--color-danger); }
 .proxy-dialog-hint { margin: 0.4rem 0 0; font-size: 0.72rem; color: var(--text-muted); }
 .proxy-dialog-error {
@@ -1652,3 +1654,53 @@ body.privacy-mode .blurred-email {
 .proxy-dialog-spacer { flex: 1; }
 .proxy-label { color: var(--text-secondary); }
 .proxy-info-row.is-invalid .proxy-label { color: var(--color-warning); }
+.proxy-dialog-pool { margin-bottom: 0.9rem; }
+.proxy-dialog-or { margin: 0.6rem 0 0; font-size: 0.72rem; color: var(--text-muted); text-align: center; }
+
+/* =========================================================================
+   Proxy Pool: bulk import with live validation
+   ========================================================================= */
+.pool-card { display: flex; flex-direction: column; gap: 0.6rem; }
+.pool-input { resize: vertical; min-height: 7rem; line-height: 1.5; }
+.pool-input.is-dragover { border-color: var(--border-focus); background: var(--accent-subtle); }
+.pool-input-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; }
+.pool-file-btn { cursor: pointer; }
+.pool-results { display: flex; flex-direction: column; gap: 0.75rem; margin-top: 0.4rem; }
+.pool-summary { margin: 0; font-size: 0.8rem; color: var(--text-secondary); }
+.pool-table-wrap { overflow-x: auto; border: 1px solid var(--border-default); border-radius: var(--radius-md); max-height: 22rem; overflow-y: auto; }
+.pool-table { width: 100%; border-collapse: collapse; font-size: 0.76rem; }
+.pool-table th {
+  position: sticky; top: 0; z-index: 1;
+  background: var(--bg-surface-elevated);
+  color: var(--text-muted); font-weight: 500; text-align: left;
+  padding: 0.45rem 0.6rem; border-bottom: 1px solid var(--border-default); white-space: nowrap;
+}
+.pool-table td { padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--border-subtle); vertical-align: top; }
+.pool-table tr:last-child td { border-bottom: none; }
+.pool-table .num { font-variant-numeric: tabular-nums; color: var(--text-muted); white-space: nowrap; }
+.pool-table .proxy-cell { font-family: var(--font-mono); overflow-wrap: anywhere; }
+.pool-note { display: block; margin-top: 0.2rem; font-family: var(--font-sans); font-size: 0.7rem; color: var(--color-warning); }
+.pool-status { display: inline-block; padding: 0.1rem 0.45rem; border-radius: var(--radius-pill); font-size: 0.7rem; font-weight: 500; white-space: nowrap; }
+.pool-status-ok { color: var(--color-success); background: var(--color-success-bg); }
+.pool-status-failed, .pool-status-invalid { color: var(--color-danger); background: var(--color-danger-bg); }
+.pool-status-duplicate { color: var(--text-muted); background: var(--bg-subtle); }
+.pool-error { display: block; margin-top: 0.2rem; font-size: 0.7rem; color: var(--text-muted); overflow-wrap: anywhere; }
+.pool-omniroute { display: flex; flex-direction: column; gap: 0.6rem; }
+.pool-check-label { display: inline-flex; align-items: center; gap: 0.45rem; font-size: 0.8rem; color: var(--text-secondary); cursor: pointer; }
+.pool-omniroute-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: 0.6rem; }
+.pool-omniroute-hint { grid-column: 1 / -1; margin: 0; }
+.pool-list-header { margin-top: 0.6rem; }
+.pool-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.35rem; }
+.pool-list li {
+  display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;
+  padding: 0.4rem 0.6rem; background: rgba(0, 0, 0, 0.15); border-radius: var(--radius-md); font-size: 0.75rem;
+}
+.pool-list .pool-proxy { font-family: var(--font-mono); color: var(--text-secondary); overflow-wrap: anywhere; flex: 1; min-width: 10rem; }
+.pool-list .pool-proxy.is-invalid { color: var(--color-warning); }
+.pool-list .pool-usage { color: var(--text-muted); white-space: nowrap; }
+.pool-list .pool-usage.is-free { color: var(--color-success); }
+.pool-list .pool-empty { color: var(--text-muted); background: none; padding-left: 0; }
+.pool-status-warn { color: var(--color-warning); background: var(--color-warning-bg); }
+.pool-status-neutral { color: var(--text-muted); background: var(--bg-subtle); }
+.pool-badge-omni { font-size: 0.68rem; padding: 0.05rem 0.4rem; border-radius: var(--radius-pill); white-space: nowrap; color: var(--accent-light); background: var(--accent-subtle); }
+.pool-badge-omni.is-shared { color: var(--color-warning); background: var(--color-warning-bg); }

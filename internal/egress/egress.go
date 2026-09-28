@@ -74,6 +74,101 @@ func ParseProxyURL(raw string) (*url.URL, error) {
 	return u, nil
 }
 
+// ParseProxyLine parses one line of a bulk proxy list and returns the proxy in URL form. It accepts
+// a proxy URL (scheme://[user:pass@]host:port), the provider-list form host:port:user:pass (the
+// password may itself contain ':'), and a bare host:port; the last two default to http. Errors
+// wrap ErrInvalidProxy and never contain the line's credentials.
+func ParseProxyLine(line string) (*url.URL, error) {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return nil, fmt.Errorf("%w: empty", ErrInvalidProxy)
+	}
+	if strings.Contains(line, "://") {
+		return ParseProxyURL(line)
+	}
+	parts := strings.Split(line, ":")
+	var u *url.URL
+	switch {
+	case len(parts) == 2:
+		u = &url.URL{Scheme: "http", Host: net.JoinHostPort(parts[0], parts[1])}
+	case len(parts) >= 4:
+		user, pass := parts[2], strings.Join(parts[3:], ":")
+		if user == "" || pass == "" {
+			return nil, fmt.Errorf("%w: empty username or password in host:port:user:pass", ErrInvalidProxy)
+		}
+		u = &url.URL{Scheme: "http", Host: net.JoinHostPort(parts[0], parts[1]), User: url.UserPassword(user, pass)}
+	default:
+		return nil, fmt.Errorf("%w: expected scheme://user:pass@host:port, host:port:user:pass or host:port", ErrInvalidProxy)
+	}
+	// Round-trip through ParseProxyURL so host and port get the same checks as a typed URL.
+	return ParseProxyURL(u.String())
+}
+
+// CheckResult is the outcome of routing one request through a proxy.
+type CheckResult struct {
+	ExitIP  string        // the address the echo service saw, i.e. the proxy's exit IP
+	Latency time.Duration // time to the echo service's answer
+}
+
+// Check sends one GET to echoURL through proxy and reports the proxy's exit IP. echoURL must answer
+// with the caller's IP as plain text, like https://api.ipify.org. It uses the same dialer as the
+// CONNECT tunnels, so host names are resolved by the proxy. Errors never contain the proxy's
+// credentials.
+func Check(ctx context.Context, proxy *url.URL, echoURL string) (CheckResult, error) {
+	client := &http.Client{Transport: &http.Transport{
+		DialContext: func(ctx context.Context, _, addr string) (net.Conn, error) {
+			return Dial(ctx, proxy, addr)
+		},
+		DisableKeepAlives:   true,
+		TLSHandshakeTimeout: handshakeTimeout,
+	}}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, echoURL, nil)
+	if err != nil {
+		return CheckResult{}, fmt.Errorf("build check request: %w", err)
+	}
+
+	start := time.Now()
+	resp, err := client.Do(req)
+	if err != nil {
+		// Drop the `Get "<echo URL>":` wrapper; the cause is what the user needs to see.
+		var ue *url.Error
+		if errors.As(err, &ue) {
+			err = ue.Err
+		}
+		return CheckResult{}, scrubCredentials(err, proxy)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 256))
+	latency := time.Since(start)
+	if err != nil {
+		return CheckResult{}, scrubCredentials(fmt.Errorf("read echo response: %w", err), proxy)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return CheckResult{}, fmt.Errorf("echo service answered %s", resp.Status)
+	}
+	ip := strings.TrimSpace(string(body))
+	if net.ParseIP(ip) == nil {
+		return CheckResult{}, errors.New("echo service did not answer with an IP address")
+	}
+	return CheckResult{ExitIP: ip, Latency: latency}, nil
+}
+
+// scrubCredentials replaces the proxy's username and password wherever they appear in err's text,
+// as a last line of defence for messages produced by the network stack.
+func scrubCredentials(err error, proxy *url.URL) error {
+	if err == nil || proxy == nil || proxy.User == nil {
+		return err
+	}
+	msg := err.Error()
+	if pass, ok := proxy.User.Password(); ok && pass != "" {
+		msg = strings.ReplaceAll(msg, pass, "***")
+	}
+	if user := proxy.User.Username(); user != "" {
+		msg = strings.ReplaceAll(msg, user, "***")
+	}
+	return errors.New(msg)
+}
+
 // formatHint recognises the provider-list format host:port:user:pass (as exported by Webshare and
 // similar providers) and suggests the URL form, since pasting it verbatim is the most likely mistake.
 func formatHint(raw string) string {

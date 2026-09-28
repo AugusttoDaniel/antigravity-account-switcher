@@ -39,6 +39,9 @@ type APIHandler struct {
 	cfgMu                sync.RWMutex
 	appConfig            *config.Config
 	fallbackConfigSetter FallbackConfigSetter
+	// proxyCheckURL is the IP-echo endpoint proxy checks call through each proxy (default
+	// defaultProxyCheckURL; overridden in tests).
+	proxyCheckURL string
 }
 
 // SetConfig sets the configuration pointer for APIHandler.
@@ -284,8 +287,11 @@ func (a *APIHandler) getAccount(w http.ResponseWriter, r *http.Request, id strin
 
 func (a *APIHandler) updateAccountProxy(w http.ResponseWriter, r *http.Request, id string) {
 	ctx := r.Context()
+	// Either a full proxy_url, or pool_id to bind a pool proxy without the dashboard ever holding
+	// its credentials. pool_id wins when both are sent.
 	var body struct {
 		ProxyURL string `json:"proxy_url"`
+		PoolID   string `json:"pool_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErrorJSON(w, http.StatusBadRequest, "invalid request payload", err)
@@ -298,6 +304,14 @@ func (a *APIHandler) updateAccountProxy(w http.ResponseWriter, r *http.Request, 
 	}
 
 	proxyURL := strings.TrimSpace(body.ProxyURL)
+	if id := strings.TrimSpace(body.PoolID); id != "" {
+		resolved, err := a.resolvePoolProxy(id)
+		if err != nil {
+			writeErrorJSON(w, http.StatusBadRequest, "invalid pool_id", err)
+			return
+		}
+		proxyURL = resolved
+	}
 	if err := egress.ValidateProxyURL(proxyURL); err != nil {
 		writeErrorJSON(w, http.StatusBadRequest, "invalid proxy_url", err)
 		return

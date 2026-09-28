@@ -125,6 +125,123 @@
       </div>
     </section>
 
+    <!-- Section 2.2: Proxy Pool. Bulk import with live validation. Credentials never come back
+         from the API: results and the pool list are masked, and an import re-sends the pasted text. -->
+    <section class="panel" aria-labelledby="pool-section-title">
+      <div class="panel-header">
+        <div class="panel-title-group">
+          <h2 id="pool-section-title" class="panel-title">
+            Proxy Pool
+            <span id="pool-count-badge" class="badge badge-info mono">…</span>
+          </h2>
+          <p class="panel-description">Paste or drop a proxy list, test every proxy live, then add the working ones to the pool (and optionally to OmniRoute). New accounts get a never-used proxy from here, and existing accounts can pick one in Edit Proxy.</p>
+        </div>
+      </div>
+
+      <div class="pool-card">
+        <label for="pool-input" class="field-label">Proxy list</label>
+        <textarea id="pool-input" class="pool-input text-input mono" rows="6" spellcheck="false" autocomplete="off"
+          placeholder="Paste the proxy table copied from your provider's panel (e.g. Webshare), or one proxy per line:&#10;1.2.3.4:8080:user:pass&#10;http://user:pass@host:port&#10;socks5://host:1080"></textarea>
+        <div class="pool-input-actions">
+          <label class="btn btn-secondary pool-file-btn">
+            Load .txt
+            <input type="file" id="pool-file" accept=".txt,text/plain" hidden>
+          </label>
+          <span class="field-hint">Or drop a .txt on the box. The panel table format is detected automatically; lines starting with # are ignored.</span>
+          <span class="proxy-dialog-spacer"></span>
+          <button id="btn-pool-check" class="btn btn-primary" disabled>Validate</button>
+        </div>
+
+        <div id="pool-results" class="pool-results" hidden>
+          <p id="pool-summary" class="pool-summary" aria-live="polite"></p>
+          <div class="pool-table-wrap">
+            <table class="pool-table">
+              <thead>
+                <tr>
+                  <th scope="col"><input type="checkbox" id="pool-select-all" aria-label="Select every working proxy"></th>
+                  <th scope="col">Line</th>
+                  <th scope="col">Proxy</th>
+                  <th scope="col">Result</th>
+                  <th scope="col">Exit IP</th>
+                  <th scope="col">Latency</th>
+                </tr>
+              </thead>
+              <tbody id="pool-results-body"></tbody>
+            </table>
+          </div>
+
+          <div class="pool-omniroute">
+            <label class="pool-check-label"><input type="checkbox" id="pool-send-omniroute"> Also send to OmniRoute (uses the connection in OmniRoute Sync below)</label>
+          </div>
+
+          <div class="config-actions-bar">
+            <div id="pool-import-msg" class="config-status-msg" aria-live="polite"></div>
+            <button id="btn-pool-import" class="btn btn-primary" disabled>Import selected</button>
+          </div>
+        </div>
+
+        <div class="pool-list-header">
+          <span class="section-label">In the pool</span>
+        </div>
+        <ul id="pool-list" class="pool-list" aria-label="Proxies in the pool"></ul>
+      </div>
+    </section>
+
+    <!-- Section 2.3: OmniRoute Sync. Read-only comparison with an OmniRoute instance; the token
+         lives only in this page's memory and is never stored. -->
+    <section class="panel" aria-labelledby="omni-section-title">
+      <div class="panel-header">
+        <div class="panel-title-group">
+          <h2 id="omni-section-title" class="panel-title">OmniRoute Sync</h2>
+          <p class="panel-description">Compare this switcher with your OmniRoute: which accounts it already has, which proxy it really uses for each one, and which pool proxies it already holds. Comparing never changes anything.</p>
+        </div>
+      </div>
+
+      <div class="pool-card">
+        <div class="pool-omniroute-fields">
+          <div class="config-field">
+            <label for="omni-url" class="field-label">OmniRoute URL</label>
+            <input id="omni-url" class="text-input mono" type="url" placeholder="https://router.example.com" autocomplete="off">
+          </div>
+          <div class="config-field">
+            <label for="omni-token" class="field-label">Management token</label>
+            <input id="omni-token" class="text-input mono" type="password" placeholder="token with manage scope" autocomplete="off">
+          </div>
+          <div class="config-field">
+            <label for="omni-region" class="field-label">Region for sent proxies (optional)</label>
+            <input id="omni-region" class="text-input" type="text" placeholder="United Kingdom" autocomplete="off">
+          </div>
+          <p class="field-hint pool-omniroute-hint">The token stays only while this page is open and is never saved. OmniRoute must be on https unless it runs on this machine.</p>
+        </div>
+        <div class="pool-input-actions">
+          <span id="omni-summary" class="pool-summary" aria-live="polite"></span>
+          <span class="proxy-dialog-spacer"></span>
+          <button id="btn-omni-compare" class="btn btn-primary">Compare</button>
+        </div>
+
+        <div id="omni-results" class="pool-results" hidden>
+          <div class="pool-table-wrap">
+            <table class="pool-table">
+              <thead>
+                <tr>
+                  <th scope="col">Account</th>
+                  <th scope="col">In OmniRoute</th>
+                  <th scope="col">Proxy here</th>
+                  <th scope="col">Proxy in OmniRoute</th>
+                  <th scope="col">Status</th>
+                </tr>
+              </thead>
+              <tbody id="omni-accounts-body"></tbody>
+            </table>
+          </div>
+          <div id="omni-only-wrap" hidden>
+            <span class="section-label">Only in OmniRoute</span>
+            <ul id="omni-only-list" class="pool-list"></ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <!-- Section 2.5: Model Fallback & Routing Strategy -->
     <section class="panel" aria-labelledby="fallback-section-title">
       <div class="panel-header">
@@ -334,6 +451,11 @@
       <h2 id="proxy-dialog-title" class="proxy-dialog-title">Outbound proxy</h2>
       <p id="proxy-dialog-account" class="proxy-dialog-account mono"></p>
       <p class="proxy-dialog-current">Current: <span id="proxy-dialog-current" class="mono"></span></p>
+      <div id="proxy-dialog-pool" class="proxy-dialog-pool" hidden>
+        <label for="proxy-dialog-pool-select" class="proxy-dialog-label">Pick a free proxy from the pool</label>
+        <select id="proxy-dialog-pool-select" class="form-select mono"></select>
+        <p class="proxy-dialog-or">or type a new one</p>
+      </div>
       <label for="proxy-dialog-input" class="proxy-dialog-label">New proxy URL</label>
       <input id="proxy-dialog-input" class="proxy-dialog-input mono" type="text" name="proxy_url"
              autocomplete="off" spellcheck="false" placeholder="http://user:pass@host:port"
