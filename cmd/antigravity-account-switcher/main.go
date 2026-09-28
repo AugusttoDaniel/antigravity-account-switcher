@@ -197,8 +197,8 @@ func runServe(args []string) {
 		fmt.Printf("Auto-imported existing Antigravity account: %s\n", importedAcc.Email)
 	}
 
-	tokenRefresher := quota.TokenRefresherFunc(func(ctx context.Context, rt string) (string, time.Time, error) {
-		resp, err := oauthService.RefreshToken(ctx, rt)
+	tokenRefresher := quota.TokenRefresherFunc(func(ctx context.Context, rt, proxyURL string) (string, time.Time, error) {
+		resp, err := oauthService.RefreshTokenVia(ctx, rt, proxyURL)
 		if err != nil {
 			return "", time.Time{}, err
 		}
@@ -415,13 +415,17 @@ func runAddAccount(args []string) {
 		opener = func(url string) error { return nil }
 	}
 
-	acc, err := oauthService.StartLoopbackFlow(ctx, opener, func(authURL string) {
+	// When a proxy is supplied up front, route the server-to-server code exchange and userinfo
+	// lookup through it so Google observes the proxy IP for onboarding, not the operator's real IP.
+	onboardingProxy := strings.TrimSpace(*proxyFlag)
+
+	acc, err := oauthService.StartLoopbackFlowWithProxy(ctx, opener, func(authURL string) {
 		if *noBrowser {
 			fmt.Printf("\nOpen this URL in your browser to authorize:\n\n%s\n\nWaiting for authorization...\n", authURL)
 		} else {
 			fmt.Printf("\nIf your browser does not open automatically, open this URL:\n\n%s\n\nWaiting for authorization...\n", authURL)
 		}
-	})
+	}, onboardingProxy)
 
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "\nOAuth authentication failed: %v\n", err)

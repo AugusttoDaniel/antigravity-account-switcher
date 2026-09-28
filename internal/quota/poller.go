@@ -27,17 +27,19 @@ const (
 	DefaultHTTPTimeout = 30 * time.Second
 )
 
-// TokenRefresher defines the contract for refreshing OAuth2 tokens.
+// TokenRefresher defines the contract for refreshing OAuth2 tokens. proxyURL is the account's
+// outbound proxy (empty for a direct connection); the refresh must egress through it so background
+// renewal does not leak the operator's real IP for a proxied account.
 type TokenRefresher interface {
-	RefreshToken(ctx context.Context, refreshToken string) (accessToken string, expiry time.Time, err error)
+	RefreshToken(ctx context.Context, refreshToken, proxyURL string) (accessToken string, expiry time.Time, err error)
 }
 
 // TokenRefresherFunc allows a function to satisfy the TokenRefresher interface.
-type TokenRefresherFunc func(ctx context.Context, refreshToken string) (string, time.Time, error)
+type TokenRefresherFunc func(ctx context.Context, refreshToken, proxyURL string) (string, time.Time, error)
 
 // RefreshToken invokes the underlying function.
-func (f TokenRefresherFunc) RefreshToken(ctx context.Context, refreshToken string) (string, time.Time, error) {
-	return f(ctx, refreshToken)
+func (f TokenRefresherFunc) RefreshToken(ctx context.Context, refreshToken, proxyURL string) (string, time.Time, error) {
+	return f(ctx, refreshToken, proxyURL)
 }
 
 // Config holds options for the Quota Poller Daemon.
@@ -340,7 +342,7 @@ func (p *Poller) pollAccount(ctx context.Context, acc *domain.Account, now time.
 	// 1. Check token expiry and refresh if needed
 	if acc.IsTokenExpired(p.cfg.TokenExpiryMargin) {
 		if p.tokenRefresher != nil && acc.RefreshToken != "" {
-			newAccess, newExpiry, err := p.tokenRefresher.RefreshToken(ctx, acc.RefreshToken)
+			newAccess, newExpiry, err := p.tokenRefresher.RefreshToken(ctx, acc.RefreshToken, acc.ProxyURL)
 			if err != nil {
 				if strings.Contains(err.Error(), "invalid_grant") || strings.Contains(err.Error(), "revoked") {
 					_ = p.accountRepo.UpdateStatus(ctx, acc.ID, domain.AccountStatusError)
@@ -436,7 +438,7 @@ func (p *Poller) fetchQuotaSummary(ctx context.Context, acc *domain.Account) ([]
 	if resp.StatusCode == http.StatusUnauthorized {
 		// Attempt one forced refresh
 		if p.tokenRefresher != nil && acc.RefreshToken != "" {
-			newAccess, newExpiry, refErr := p.tokenRefresher.RefreshToken(ctx, acc.RefreshToken)
+			newAccess, newExpiry, refErr := p.tokenRefresher.RefreshToken(ctx, acc.RefreshToken, acc.ProxyURL)
 			if refErr == nil {
 				_ = p.accountRepo.UpdateToken(ctx, acc.ID, newAccess, newExpiry)
 				acc.AccessToken = newAccess

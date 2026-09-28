@@ -692,7 +692,7 @@ func TestProxyHandler_ProactiveTokenRefresh(t *testing.T) {
 	}
 
 	refreshCalled := false
-	refresher := TokenRefresherFunc(func(ctx context.Context, rt string) (string, time.Time, error) {
+	refresher := TokenRefresherFunc(func(ctx context.Context, rt, _ string) (string, time.Time, error) {
 		if rt != "refresh-123" {
 			t.Errorf("unexpected refresh token: %s", rt)
 		}
@@ -770,7 +770,7 @@ func TestProxyHandler_Reactive401TokenRefresh(t *testing.T) {
 	}
 
 	refreshed := false
-	refresher := TokenRefresherFunc(func(ctx context.Context, rt string) (string, time.Time, error) {
+	refresher := TokenRefresherFunc(func(ctx context.Context, rt, _ string) (string, time.Time, error) {
 		refreshed = true
 		return "newly-refreshed-token", time.Now().UTC().Add(1 * time.Hour), nil
 	})
@@ -834,7 +834,7 @@ func TestProxyHandler_ReactiveTokenRefresh_On401_RefreshErrorPreservesBody(t *te
 	}
 	_ = accountRepo.Create(context.Background(), acc)
 
-	refresher := TokenRefresherFunc(func(ctx context.Context, rt string) (string, time.Time, error) {
+	refresher := TokenRefresherFunc(func(ctx context.Context, rt, _ string) (string, time.Time, error) {
 		return "", time.Time{}, errors.New("refresh token invalid_grant")
 	})
 
