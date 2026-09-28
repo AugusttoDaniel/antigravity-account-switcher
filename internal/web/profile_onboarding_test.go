@@ -84,7 +84,7 @@ func (f *fakeProfileAPI) snapshot() (pings []string, created []adspower.CreatePr
 const proxyWithSecret = "http://alice:s3cretPW@proxy.example.com:3128"
 
 // profileTestSetup wires a server whose profile API is the fake, configured at apiURL.
-func profileTestSetup(t *testing.T, apiURL, engine string, fake *fakeProfileAPI) (*Server, *fakeOAuthEngine, domain.AccountRepository, *[]string) {
+func profileTestSetup(t *testing.T, apiURL, engine string, fake *fakeProfileAPI) (*Server, *fakeOAuthEngine, domain.AccountRepository, func() []string) {
 	t.Helper()
 	server, oauthEngine, repo := newOAuthTestServer(t)
 	cfg := config.DefaultConfig()
@@ -100,8 +100,12 @@ func profileTestSetup(t *testing.T, apiURL, engine string, fake *fakeProfileAPI)
 		navigated = append(navigated, ws+"|"+port+"|"+target)
 		return nil
 	}
-	t.Cleanup(func() { navMu.Lock(); navMu.Unlock() })
-	return server, oauthEngine, repo, &navigated
+	navigations := func() []string {
+		navMu.Lock()
+		defer navMu.Unlock()
+		return append([]string(nil), navigated...)
+	}
+	return server, oauthEngine, repo, navigations
 }
 
 func waitFor(t *testing.T, what string, cond func() bool) {
@@ -118,7 +122,7 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 
 func TestProfileOnboarding_CreatesTheProfileOpensItAndSavesTheAccount(t *testing.T) {
 	fake := &fakeProfileAPI{reachable: map[string]bool{"http://127.0.0.1:50400": true}}
-	server, engine, repo, navigated := profileTestSetup(t, "http://127.0.0.1:50400", "cloak", fake)
+	server, engine, repo, navigations := profileTestSetup(t, "http://127.0.0.1:50400", "cloak", fake)
 
 	code, out, raw := startOAuth(t, server, http.MethodPost, map[string]any{"mode": "profile", "proxy_url": proxyWithSecret})
 	if code != http.StatusOK || out["mode"] != "profile" || out["profile_id"] != "profile-1" {
@@ -147,8 +151,9 @@ func TestProfileOnboarding_CreatesTheProfileOpensItAndSavesTheAccount(t *testing
 	waitFor(t, "the profile browser to be stopped", func() bool { _, _, _, stopped := fake.snapshot(); return len(stopped) == 1 })
 
 	// The consent page was opened inside the profile's browser, not the default browser.
-	if len(*navigated) != 1 || !strings.HasPrefix((*navigated)[0], "ws://127.0.0.1:9222/devtools/browser/abc|9222|https://accounts.google.com/") {
-		t.Errorf("navigated = %v", *navigated)
+	navigated := navigations()
+	if len(navigated) != 1 || !strings.HasPrefix(navigated[0], "ws://127.0.0.1:9222/devtools/browser/abc|9222|https://accounts.google.com/") {
+		t.Errorf("navigated = %v", navigated)
 	}
 	if proxies, openerNil, direct, _ := engine.snapshot(); len(proxies) != 1 || proxies[0] != proxyWithSecret || direct != 0 || openerNil[0] {
 		t.Errorf("flow started with proxies=%v openerNil=%v direct=%d", proxies, openerNil, direct)
