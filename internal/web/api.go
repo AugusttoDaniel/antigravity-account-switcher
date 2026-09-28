@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -262,6 +263,28 @@ func (a *APIHandler) getAccount(w http.ResponseWriter, r *http.Request, id strin
 	})
 }
 
+// validateProxyURL rejects proxy URLs that would silently be ignored by the outbound
+// transport (which then falls back to a direct connection, defeating per-account isolation).
+// An empty value is allowed and clears any configured proxy.
+func validateProxyURL(raw string) error {
+	if raw == "" {
+		return nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("not a valid URL: %w", err)
+	}
+	switch u.Scheme {
+	case "http", "https", "socks5", "socks5h":
+	default:
+		return fmt.Errorf("unsupported scheme %q (use http, https, socks5 or socks5h, e.g. http://user:pass@host:port)", u.Scheme)
+	}
+	if u.Host == "" {
+		return errors.New("missing host:port")
+	}
+	return nil
+}
+
 func (a *APIHandler) updateAccountProxy(w http.ResponseWriter, r *http.Request, id string) {
 	ctx := r.Context()
 	var body struct {
@@ -277,7 +300,13 @@ func (a *APIHandler) updateAccountProxy(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	if err := a.accountRepo.UpdateProxyURL(ctx, id, strings.TrimSpace(body.ProxyURL)); err != nil {
+	proxyURL := strings.TrimSpace(body.ProxyURL)
+	if err := validateProxyURL(proxyURL); err != nil {
+		writeErrorJSON(w, http.StatusBadRequest, "invalid proxy_url", err)
+		return
+	}
+
+	if err := a.accountRepo.UpdateProxyURL(ctx, id, proxyURL); err != nil {
 		if errors.Is(err, domain.ErrAccountNotFound) {
 			http.NotFound(w, r)
 			return

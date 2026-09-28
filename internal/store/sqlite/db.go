@@ -32,7 +32,9 @@ func BuildDSN(dbPath string) string {
 func Open(dbPath string) (*DB, error) {
 	if dbPath != ":memory:" && !strings.HasPrefix(dbPath, "file::memory:") {
 		if dir := filepath.Dir(dbPath); dir != "" && dir != "." {
-			if err := os.MkdirAll(dir, 0755); err != nil {
+			// The database stores OAuth refresh tokens and per-account proxy credentials, so
+			// restrict the directory to the owner. Mode bits apply on Unix; Windows uses ACLs.
+			if err := os.MkdirAll(dir, 0o700); err != nil {
 				return nil, fmt.Errorf("failed to create db directory: %w", err)
 			}
 		}
@@ -64,6 +66,16 @@ func Open(dbPath string) (*DB, error) {
 	if err := Migrate(db); err != nil {
 		rawDB.Close()
 		return nil, fmt.Errorf("failed to apply migrations: %w", err)
+	}
+
+	// Restrict the on-disk database (and its WAL/SHM sidecars) to the owner, since it stores
+	// OAuth refresh tokens. Best-effort: mode bits apply on Unix, Windows uses ACLs.
+	if dbPath != ":memory:" && !strings.HasPrefix(dbPath, "file::memory:") {
+		for _, p := range []string{dbPath, dbPath + "-wal", dbPath + "-shm"} {
+			if _, statErr := os.Stat(p); statErr == nil {
+				_ = os.Chmod(p, 0o600)
+			}
+		}
 	}
 
 	return db, nil

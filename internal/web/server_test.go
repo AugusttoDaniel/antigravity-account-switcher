@@ -903,3 +903,68 @@ func TestServer_ModelsAPI(t *testing.T) {
 		t.Errorf("expected 405 Method Not Allowed for POST /api/models, got %d", respPost.StatusCode)
 	}
 }
+
+func TestServer_RejectsDNSRebindingAndCrossOrigin(t *testing.T) {
+	_, accRepo, quotaRepo, _, metricsSvc, broadcaster, eventRepo := setupTestWeb(t)
+
+	server, err := NewServer(accRepo, quotaRepo, metricsSvc, broadcaster, eventRepo, nil)
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+
+	// 1. A non-local Host header (DNS rebinding) is rejected on the management API.
+	req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	req.Host = "evil.example.com"
+	rr := httptest.NewRecorder()
+	server.ServeHTTP(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("expected 403 for non-local Host, got %d", rr.Code)
+	}
+
+	// 2. A loopback Host header is accepted.
+	req = httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	req.Host = "127.0.0.1:8080"
+	rr = httptest.NewRecorder()
+	server.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected 200 for loopback Host, got %d", rr.Code)
+	}
+
+	// 3. A cross-origin state-changing request is rejected even with a loopback Host.
+	req = httptest.NewRequest(http.MethodPost, "/api/config", strings.NewReader(`{}`))
+	req.Host = "127.0.0.1:8080"
+	req.Header.Set("Origin", "http://evil.example.com")
+	rr = httptest.NewRecorder()
+	server.ServeHTTP(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("expected 403 for cross-origin POST, got %d", rr.Code)
+	}
+}
+
+func TestValidateProxyURL(t *testing.T) {
+	valid := []string{
+		"",
+		"http://127.0.0.1:8080",
+		"http://user:pass@proxy.example.com:3128",
+		"https://proxy.example.com:443",
+		"socks5://10.0.0.1:1080",
+		"socks5h://host:1080",
+	}
+	for _, v := range valid {
+		if err := validateProxyURL(v); err != nil {
+			t.Errorf("expected %q to be valid, got %v", v, err)
+		}
+	}
+
+	invalid := []string{
+		"1.2.3.4:8080",      // no scheme -> would silently fall back to direct
+		"proxy.example.com", // no scheme
+		"ftp://host:21",     // unsupported scheme
+		"http://",           // missing host
+	}
+	for _, v := range invalid {
+		if err := validateProxyURL(v); err == nil {
+			t.Errorf("expected %q to be rejected, got nil error", v)
+		}
+	}
+}

@@ -138,7 +138,9 @@ func Load() (*Config, error) {
 // Save writes the configuration to disk, ensuring directory creation.
 func Save(cfg *Config) error {
 	dir := ConfigDir()
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	// The config directory and file may hold sensitive material (e.g. OAuth client secrets),
+	// so restrict them to the owner. Mode bits are enforced on Unix; Windows uses ACLs.
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("failed to create config directory %s: %w", dir, err)
 	}
 
@@ -148,7 +150,7 @@ func Save(cfg *Config) error {
 	}
 
 	path := ConfigFilePath()
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	if err := os.WriteFile(path, data, 0o600); err != nil {
 		return fmt.Errorf("failed to write config to %s: %w", path, err)
 	}
 
