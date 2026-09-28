@@ -1891,6 +1891,12 @@
     poolSelect: document.getElementById('oauth-dialog-pool-select'),
     input: document.getElementById('oauth-dialog-input'),
     openBrowser: document.getElementById('oauth-dialog-open'),
+    openWrap: document.getElementById('oauth-dialog-open-wrap'),
+    urlLabel: document.getElementById('oauth-dialog-url-label'),
+    modeProfile: document.getElementById('oauth-mode-profile'),
+    modeLink: document.getElementById('oauth-mode-link'),
+    modeHint: document.getElementById('oauth-mode-profile-hint'),
+    recheck: document.getElementById('oauth-mode-recheck'),
     error: document.getElementById('oauth-dialog-error'),
     link: document.getElementById('oauth-dialog-link'),
     url: document.getElementById('oauth-dialog-url'),
@@ -1904,6 +1910,43 @@
 
   function oauthDialogHasProxy() {
     return oauthDialog.input.value.trim() !== '' || oauthDialog.poolSelect.value !== '';
+  }
+
+  function oauthDialogMode() {
+    return oauthDialog.modeProfile.checked ? 'profile' : 'link';
+  }
+
+  // The default-browser option only makes sense when the user opens the link themselves.
+  function applyOAuthMode() {
+    const profile = oauthDialogMode() === 'profile';
+    oauthDialog.openWrap.hidden = profile;
+    if (profile) oauthDialog.openBrowser.checked = false;
+    oauthDialog.start.textContent = profile ? 'Open profile & sign in' : 'Start sign-in';
+  }
+
+  // Asks the server whether an isolated browser profile (AliasMode / ADS Power) can be used now.
+  async function checkProfileAPI() {
+    oauthDialog.modeHint.classList.remove('is-error');
+    oauthDialog.modeHint.textContent = 'Checking for AliasMode…';
+    let status = null;
+    try {
+      const res = await fetch('/api/onboarding/status');
+      if (res.ok) status = await res.json();
+    } catch (_) {}
+    const available = !!(status && status.available);
+    oauthDialog.modeProfile.disabled = !available;
+    oauthDialog.modeProfile.closest('.oauth-mode-option').classList.toggle('is-unavailable', !available);
+    if (available) {
+      oauthDialog.modeHint.textContent = `Found at ${status.url} (engine ${status.engine}). Creates a profile with the proxy below and opens Google in it.`;
+      oauthDialog.modeProfile.checked = true;
+    } else {
+      oauthDialog.modeHint.classList.add('is-error');
+      oauthDialog.modeHint.textContent = status && status.error
+        ? `Not available: ${status.error}`
+        : 'Not available: start AliasMode with its Local API enabled, then check again.';
+      oauthDialog.modeLink.checked = true;
+    }
+    applyOAuthMode();
   }
 
   function updateOAuthDialogState() {
@@ -1947,12 +1990,15 @@
     oauthDialog.busy = false;
     oauthDialog.input.disabled = false;
     oauthDialog.poolSelect.disabled = false;
-    oauthDialog.start.textContent = 'Start sign-in';
+    oauthDialog.modeProfile.disabled = true; // until the server says an isolated profile can be used
+    oauthDialog.modeLink.checked = true;
+    applyOAuthMode();
     setOAuthDialogError('');
     updateOAuthDialogState();
     oauthDialog.el.showModal();
     oauthDialog.input.focus();
     fillOAuthDialogPool();
+    checkProfileAPI();
   }
 
   // After the link is shown, watch for the account to appear (or its proxy to change, for a
@@ -1997,7 +2043,8 @@
     updateOAuthDialogState();
 
     const poolID = oauthDialog.poolSelect.value;
-    const payload = { open_browser: oauthDialog.openBrowser.checked };
+    const mode = oauthDialogMode();
+    const payload = { mode, open_browser: mode === 'link' && oauthDialog.openBrowser.checked };
     if (poolID) payload.pool_id = poolID;
     else payload.proxy_url = oauthDialog.input.value.trim();
 
@@ -2019,9 +2066,16 @@
       oauthDialog.url.value = data.auth_url || '';
       oauthDialog.link.hidden = false;
       oauthDialog.start.textContent = 'Started';
-      oauthDialog.status.textContent = data.auth_url
-        ? `Waiting for the sign-in (proxy ${data.proxy})…`
-        : 'The sign-in started, but the link is not ready yet. Check the event log below.';
+      if (data.mode === 'profile') {
+        // The profile's own browser is already on the Google page; the link is only a fallback.
+        oauthDialog.urlLabel.textContent = 'If the window did not open Google, open this link inside the profile';
+        oauthDialog.status.textContent = `Profile ${data.profile_id} is open through ${data.proxy}. Sign in to Google inside its window…`;
+      } else {
+        oauthDialog.urlLabel.textContent = 'Sign-in link: open it in the profile that uses this proxy';
+        oauthDialog.status.textContent = data.auth_url
+          ? `Waiting for the sign-in (proxy ${data.proxy})…`
+          : 'The sign-in started, but the link is not ready yet. Check the event log below.';
+      }
       watchForNewAccount();
     } catch (err) {
       setOAuthDialogError(`Could not start the sign-in: ${err.message}`);
@@ -2049,6 +2103,9 @@
     });
     oauthDialog.copy.addEventListener('click', () => copyToClipboard(oauthDialog.url.value, 'Sign-in link'));
     oauthDialog.close.addEventListener('click', () => oauthDialog.el.close());
+    oauthDialog.modeProfile.addEventListener('change', applyOAuthMode);
+    oauthDialog.modeLink.addEventListener('change', applyOAuthMode);
+    oauthDialog.recheck.addEventListener('click', checkProfileAPI);
     oauthDialog.el.addEventListener('close', () => {
       stopOAuthPolling();
       oauthDialog.input.value = ''; // never leave a typed proxy credential in the DOM

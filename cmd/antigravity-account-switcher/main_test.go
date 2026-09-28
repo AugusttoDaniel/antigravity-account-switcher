@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/config"
 	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/store/sqlite"
 )
 
@@ -138,5 +139,37 @@ func TestCLI_RunInstallDesktop(t *testing.T) {
 
 	if !strings.Contains(out, "Success! Antigravity desktop application installed") {
 		t.Errorf("expected installation success, got: %s", out)
+	}
+}
+
+// The profile API key must never be echoed back by config get, list or set: those land in the
+// terminal and its history.
+func TestCLI_RunConfig_ProfileAPISettings(t *testing.T) {
+	t.Setenv("ANTIGRAVITY_CONFIG_DIR", t.TempDir())
+
+	setOut := captureStdout(func() { runConfig([]string{"set", "adspower_api_key", "super-secret-key"}) })
+	if strings.Contains(setOut, "super-secret-key") {
+		t.Errorf("config set echoes the API key: %s", setOut)
+	}
+	captureStdout(func() { runConfig([]string{"set", "adspower_api_url", "http://127.0.0.1:50400"}) })
+	captureStdout(func() { runConfig([]string{"set", "adspower_engine", "cloak"}) })
+
+	if got := strings.TrimSpace(captureStdout(func() { runConfig([]string{"get", "adspower_api_url"}) })); got != "http://127.0.0.1:50400" {
+		t.Errorf("get adspower_api_url = %q", got)
+	}
+	if got := strings.TrimSpace(captureStdout(func() { runConfig([]string{"get", "adspower_engine"}) })); got != "cloak" {
+		t.Errorf("get adspower_engine = %q", got)
+	}
+	for name, out := range map[string]string{
+		"get":  captureStdout(func() { runConfig([]string{"get", "adspower_api_key"}) }),
+		"list": captureStdout(func() { runConfig([]string{"list"}) }),
+	} {
+		if strings.Contains(out, "super-secret-key") {
+			t.Errorf("config %s prints the API key: %s", name, out)
+		}
+	}
+	// The key is really stored, only hidden from display.
+	if cfg, err := config.Load(); err != nil || cfg.AdsPowerAPIKey != "super-secret-key" {
+		t.Errorf("stored API key = %q (err %v)", cfg.AdsPowerAPIKey, err)
 	}
 }

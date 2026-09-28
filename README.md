@@ -180,10 +180,17 @@ The CLI provides commands for launch supervision, manual switching, and configur
   ```
 - **Add an Account Without Leaking Your IP:** the dashboard's **Authenticate New Google Account**
   button asks for the account's proxy first (from the pool, or typed), sends the token exchange
-  through it, saves it on the account, and shows the sign-in link instead of opening your default
-  browser (that browser reaches Google from your real IP). Open the link in a browser profile that
-  uses the same proxy. From the terminal, `add-account --proxy <url>` does the same for the token
-  exchange, and `add-account-adspower` also isolates the sign-in page itself.
+  through it and saves it on the account. Then it either:
+  - **opens an isolated AliasMode / ADS Power profile** (one click): the profile is created bound to
+    that proxy, its browser opens Google, and you sign in inside that window. The dashboard finds
+    AliasMode on its default port (`http://127.0.0.1:50400`) or ADS Power's; to point it elsewhere use
+    `config set adspower_api_url <url>` (it must be on this machine, since the proxy credentials are
+    sent to it), plus `adspower_api_key` and `adspower_engine` (default `cloak`, Chromium) if needed; or
+  - **shows the sign-in link** instead of opening your default browser (that browser reaches Google
+    from your real IP), for you to open in a browser profile that uses the same proxy.
+
+  From the terminal, `add-account --proxy <url>` does the same for the token exchange, and
+  `add-account-adspower` runs the profile flow.
 - **Specify Custom Port:**
   ```bash
   antigravity-account-switcher launch --port 1831

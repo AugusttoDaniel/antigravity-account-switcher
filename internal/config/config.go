@@ -38,6 +38,13 @@ type Config struct {
 	// accounts draw from during ADS Power onboarding. A proxy is considered "used" once it is
 	// bound to any account, so each new account gets a never-used proxy from this list.
 	Proxies []string `json:"proxies,omitempty"`
+	// AdsPowerAPIURL, AdsPowerAPIKey and AdsPowerEngine point the dashboard at the browser-profile API used
+	// to add accounts inside an isolated profile: ADS Power, or the AliasMode-compatible API (default
+	// http://127.0.0.1:50400 for AliasMode, engine "cloak" = Chromium). The URL must be on this machine,
+	// since the account's proxy credentials are sent to it.
+	AdsPowerAPIURL string `json:"adspower_api_url,omitempty"`
+	AdsPowerAPIKey string `json:"adspower_api_key,omitempty"`
+	AdsPowerEngine string `json:"adspower_engine,omitempty"`
 }
 
 // ConfigDir returns the default configuration directory (~/.config/antigravity-account-switcher).

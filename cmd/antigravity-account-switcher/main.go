@@ -752,6 +752,9 @@ func executeConfig(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "  model_primary:              %s\n", cfg.ModelPrimary)
 		fmt.Fprintf(stdout, "  model_secondary:            %s\n", cfg.ModelSecondary)
 		fmt.Fprintf(stdout, "  fallback_secondary_enabled: %t\n", cfg.FallbackSecondaryEnabled)
+		fmt.Fprintf(stdout, "  adspower_api_url:           %s\n", cfg.AdsPowerAPIURL)
+		fmt.Fprintf(stdout, "  adspower_api_key:           %s\n", maskSecret(cfg.AdsPowerAPIKey))
+		fmt.Fprintf(stdout, "  adspower_engine:            %s\n", cfg.AdsPowerEngine)
 		return 0
 	}
 
@@ -789,6 +792,12 @@ func executeConfig(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stdout, cfg.ModelSecondary)
 		case "fallback_secondary_enabled":
 			fmt.Fprintln(stdout, cfg.FallbackSecondaryEnabled)
+		case "adspower_api_url":
+			fmt.Fprintln(stdout, cfg.AdsPowerAPIURL)
+		case "adspower_api_key":
+			fmt.Fprintln(stdout, maskSecret(cfg.AdsPowerAPIKey))
+		case "adspower_engine":
+			fmt.Fprintln(stdout, cfg.AdsPowerEngine)
 		default:
 			fmt.Fprintf(stderr, "Unknown configuration key: %s\n", key)
 			return 1
@@ -854,6 +863,12 @@ func executeConfig(args []string, stdout, stderr io.Writer) int {
 				return 1
 			}
 			cfg.FallbackSecondaryEnabled = b
+		case "adspower_api_url":
+			cfg.AdsPowerAPIURL = strings.TrimSpace(val)
+		case "adspower_api_key":
+			cfg.AdsPowerAPIKey = strings.TrimSpace(val)
+		case "adspower_engine":
+			cfg.AdsPowerEngine = strings.TrimSpace(val)
 		default:
 			fmt.Fprintf(stderr, "Unknown configuration key: %s\n", key)
 			return 1
@@ -872,7 +887,11 @@ func executeConfig(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "Failed to save configuration: %v\n", err)
 			return 1
 		}
-		fmt.Fprintf(stdout, "Updated '%s' to '%s' in %s\n", key, val, config.ConfigFilePath())
+		shown := val
+		if key == "adspower_api_key" {
+			shown = maskSecret(val) // never echo a credential back to the terminal and its history
+		}
+		fmt.Fprintf(stdout, "Updated '%s' to '%s' in %s\n", key, shown, config.ConfigFilePath())
 		return 0
 
 	default:
@@ -976,4 +995,12 @@ func runRefreshQuotas(args []string) {
 			fmt.Printf("  • %-32s [%-6s]: %3d%% (reset: %s)\n", b.DisplayName, b.Window, pct, resetStr)
 		}
 	}
+}
+
+// maskSecret renders a credential for display: empty stays empty, anything else is hidden.
+func maskSecret(s string) string {
+	if strings.TrimSpace(s) == "" {
+		return ""
+	}
+	return "********"
 }

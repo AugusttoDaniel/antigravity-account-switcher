@@ -16,6 +16,7 @@ import (
 	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/domain"
 	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/egress"
 	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/oauth"
+	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/onboard"
 	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/proxypool"
 	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/store/sqlite"
 )
@@ -224,42 +225,19 @@ func runImportAdsPower(args []string) {
 
 // onboardViaProfile launches an ADS Power profile, drives it to the Google consent URL, completes
 // the loopback OAuth flow through proxyURL, and records the proxy + profile binding on the account.
-// The profile browser is stopped before returning. Shared by the single and batch commands.
+// The profile browser is stopped before returning. Shared by the single and batch commands; the
+// steps themselves live in internal/onboard, which the dashboard uses too.
 func onboardViaProfile(ctx context.Context, ads *adspower.Client, oauthService *oauth.OAuthService, accRepo *sqlite.AccountRepository, profileID, proxyURL string) (*domain.Account, error) {
-	if err := egress.ValidateProxyURL(proxyURL); err != nil {
+	sess, err := onboard.Start(ctx, ads, profileID, proxyURL)
+	if err != nil {
 		return nil, fmt.Errorf("proxy %s: %w", maskProxy(proxyURL), err)
 	}
-	started, err := ads.StartBrowser(ctx, profileID, false)
-	if err != nil {
-		return nil, fmt.Errorf("start ADS Power browser %s: %w", profileID, err)
-	}
-	defer func() {
-		stopCtx, stopCancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer stopCancel()
-		if sErr := ads.StopBrowser(stopCtx, profileID); sErr != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to stop ADS Power browser %s: %v\n", profileID, sErr)
-		}
-	}()
-
-	opener := func(authURL string) error {
-		return adspower.Navigate(ctx, started.WS.Puppeteer, started.DebugPort, authURL)
-	}
-
-	acc, err := oauthService.StartLoopbackFlowWithProxy(ctx, opener, func(authURL string) {
-		fmt.Printf("\nIf the profile browser did not navigate automatically, open this URL inside it:\n\n%s\n\n", authURL)
-	}, proxyURL)
-	if err != nil {
-		return nil, fmt.Errorf("OAuth authentication failed: %w", err)
-	}
-
-	if proxyURL != "" && acc.ProxyURL != proxyURL {
-		_ = accRepo.UpdateProxyURL(ctx, acc.ID, proxyURL)
-		acc.ProxyURL = proxyURL
-	}
-	if err := accRepo.UpdateAdsPowerProfileID(ctx, acc.ID, profileID); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to record ADS Power profile id for %s: %v\n", acc.Email, err)
-	}
-	return acc, nil
+	return sess.Run(ctx, oauthService, accRepo, onboard.Options{
+		URLLogger: func(authURL string) {
+			fmt.Printf("\nIf the profile browser did not navigate automatically, open this URL inside it:\n\n%s\n\n", authURL)
+		},
+		Warn: func(msg string) { fmt.Fprintf(os.Stderr, "Warning: %s\n", msg) },
+	})
 }
 
 // listAllProfiles pages through every ADS Power profile.
