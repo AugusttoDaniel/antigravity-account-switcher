@@ -295,6 +295,16 @@ antigravity-account-switcher codex-set-proxy eu@example.com "http://usuario:senh
   snapshot guardado, sem rede. O dashboard mostra o mesmo em barras na coluna **Limits**, com **Usage**
   por conta e **Refresh usage** para todas (lidas uma a uma, nunca em rajada). Nada consulta por
   temporizador: os limites só são lidos quando você pede.
+- **Entrega ao OmniRoute:** `codex-export-omniroute` importa contas Codex no OmniRoute
+  (`/api/providers/codex-auth/import-bulk`) e liga o proxy de cada conta à sua conexão. Sem `--yes` só
+  imprime o plano. **O refresh token do Codex é de uso único**, então os tokens só podem viver num lugar:
+  depois que o OmniRoute os tem, ele os renova, e este switcher marca a conta como *in OmniRoute* e se
+  recusa a renovar, ler limites ou trocar o Codex CLI pra ela (`--force` ignora isso, ao custo de quebrar
+  a sessão do OmniRoute nessa conta). Nada é renovado antes da exportação, pois isso giraria o token à
+  toa. Uma conta que o OmniRoute já tem por login próprio é deixada quieta (nenhum token enviado, sem
+  marca), uma que precisa de novo login é pulada, e um novo login com `codex-add` toma a conta de volta
+  (é uma família de tokens nova). `--overwrite` troca uma conexão que o OmniRoute já tem, mas nunca
+  para uma conta já entregue: o que este switcher guarda está desatualizado a essa altura.
 - **Dashboard:** o painel **OpenAI Codex Accounts** lista as contas (proxies mascarados, tokens nunca
   enviados à página) e oferece Use, Refresh, Proxy, Remove e **Add Codex account**, pelo mesmo pool de
   proxies e perfil do AliasMode das contas Google.

@@ -13,7 +13,7 @@ import (
 )
 
 const codexColumns = `id, email, chatgpt_account_id, plan_type, id_token, access_token, refresh_token,
-	last_refresh, proxy_url, adspower_profile_id, is_active, status, created_at, updated_at`
+	last_refresh, proxy_url, adspower_profile_id, is_active, status, created_at, updated_at, omniroute_exported_at`
 
 // CodexAccountRepository implements domain.CodexAccountRepository backed by SQLite.
 type CodexAccountRepository struct {
@@ -65,9 +65,9 @@ func (r *CodexAccountRepository) Upsert(ctx context.Context, acc *domain.CodexAc
 		if created.IsZero() {
 			created = time.Now().UTC()
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO codex_accounts (`+codexColumns+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		_, err = tx.ExecContext(ctx, `INSERT INTO codex_accounts (`+codexColumns+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			id, acc.Email, acc.ChatGPTAccountID, acc.PlanType, acc.IDToken, acc.AccessToken, acc.RefreshToken,
-			fmtTime(acc.LastRefresh), acc.ProxyURL, acc.AdsPowerProfileID, 0, string(status), fmtTime(created), now)
+			fmtTime(acc.LastRefresh), acc.ProxyURL, acc.AdsPowerProfileID, 0, string(status), fmtTime(created), now, exportedStr(acc.OmniRouteExportedAt))
 		if err != nil {
 			return nil, fmt.Errorf("failed to create codex account: %w", err)
 		}
@@ -79,7 +79,9 @@ func (r *CodexAccountRepository) Upsert(ctx context.Context, acc *domain.CodexAc
 				plan_type = ?, id_token = ?, access_token = ?, refresh_token = ?, last_refresh = ?,
 				proxy_url = CASE WHEN ? != '' THEN ? ELSE proxy_url END,
 				adspower_profile_id = CASE WHEN ? != '' THEN ? ELSE adspower_profile_id END,
-				status = 'active', updated_at = ?
+				status = 'active', updated_at = ?,
+				-- a fresh sign-in is a new token family that OmniRoute does not hold
+				omniroute_exported_at = ''
 			WHERE id = ?`,
 			acc.PlanType, acc.IDToken, acc.AccessToken, acc.RefreshToken, fmtTime(acc.LastRefresh),
 			acc.ProxyURL, acc.ProxyURL, acc.AdsPowerProfileID, acc.AdsPowerProfileID, now, id)
@@ -192,10 +194,10 @@ func (r *CodexAccountRepository) Delete(ctx context.Context, id string) error {
 
 func scanCodex(s rowScanner) (*domain.CodexAccount, error) {
 	var a domain.CodexAccount
-	var status, lastRefresh, created, updated string
+	var status, lastRefresh, created, updated, exported string
 	var active int
 	err := s.Scan(&a.ID, &a.Email, &a.ChatGPTAccountID, &a.PlanType, &a.IDToken, &a.AccessToken, &a.RefreshToken,
-		&lastRefresh, &a.ProxyURL, &a.AdsPowerProfileID, &active, &status, &created, &updated)
+		&lastRefresh, &a.ProxyURL, &a.AdsPowerProfileID, &active, &status, &created, &updated, &exported)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, domain.ErrCodexAccountNotFound
@@ -207,5 +209,20 @@ func scanCodex(s rowScanner) (*domain.CodexAccount, error) {
 	a.LastRefresh, _ = parseDBTime(lastRefresh)
 	a.CreatedAt, _ = parseDBTime(created)
 	a.UpdatedAt, _ = parseDBTime(updated)
+	if exported != "" {
+		a.OmniRouteExportedAt, _ = parseDBTime(exported)
+	}
 	return &a, nil
+}
+
+func exportedStr(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
+}
+
+// SetOmniRouteExported records the hand-off of the account's tokens to OmniRoute; a zero time clears it.
+func (r *CodexAccountRepository) SetOmniRouteExported(ctx context.Context, id string, at time.Time) error {
+	return r.update(ctx, id, `omniroute_exported_at = ?`, exportedStr(at))
 }

@@ -171,7 +171,7 @@ func runCodexList(args []string) {
 		fmt.Println("No Codex accounts yet. Run 'codex-add' (or 'codex-import').")
 		return
 	}
-	fmt.Printf("%-36s  %-32s  %-8s  %-8s  %-7s  %-18s  %s\n", "ID", "EMAIL", "PLAN", "STATUS", "ACTIVE", "LAST REFRESH", "OUTBOUND PROXY")
+	fmt.Printf("%-36s  %-32s  %-8s  %-8s  %-7s  %-18s  %-12s  %s\n", "ID", "EMAIL", "PLAN", "STATUS", "ACTIVE", "LAST REFRESH", "IN OMNIROUTE", "OUTBOUND PROXY")
 	for _, a := range accs {
 		mark := ""
 		if a.IsActive {
@@ -181,13 +181,18 @@ func runCodexList(args []string) {
 		if !a.LastRefresh.IsZero() && a.LastRefresh.Year() > 1970 {
 			last = a.LastRefresh.Local().Format("2006-01-02 15:04")
 		}
-		fmt.Printf("%-36s  %-32s  %-8s  %-8s  %-7s  %-18s  %s\n", a.ID, a.Email, orDash(a.PlanType), a.Status, mark, last, maskProxy(a.ProxyURL))
+		handed := "-"
+		if !a.OmniRouteExportedAt.IsZero() {
+			handed = "since " + a.OmniRouteExportedAt.Local().Format("01-02")
+		}
+		fmt.Printf("%-36s  %-32s  %-8s  %-8s  %-7s  %-18s  %-12s  %s\n", a.ID, a.Email, orDash(a.PlanType), a.Status, mark, last, handed, maskProxy(a.ProxyURL))
 	}
 }
 
 func runCodexSwitch(args []string) {
 	fs := flag.NewFlagSet("codex-switch", flag.ExitOnError)
 	dbPath := fs.String("db", defaultDBPath(), "Path to SQLite database file")
+	force := fs.Bool("force", false, "Also switch to an account whose tokens were handed to OmniRoute (the CLI and OmniRoute would then both renew the same single-use token)")
 	_ = fs.Parse(args)
 	if fs.NArg() != 1 {
 		codexFatal("Usage: antigravity-account-switcher codex-switch [flags] <account_id|email>")
@@ -202,7 +207,7 @@ func runCodexSwitch(args []string) {
 	if acc.Status == domain.AccountStatusError {
 		fmt.Fprintf(os.Stderr, "Warning: %s is marked as errored (its refresh token was rejected); sign in again with codex-add.\n", acc.Email)
 	}
-	acc, err = svc.Switch(ctx, acc.ID)
+	acc, err = svc.SwitchForce(ctx, acc.ID, *force)
 	if err != nil {
 		codexFatal("Error: %v", err)
 	}
@@ -213,6 +218,7 @@ func runCodexRefresh(args []string) {
 	fs := flag.NewFlagSet("codex-refresh", flag.ExitOnError)
 	dbPath := fs.String("db", defaultDBPath(), "Path to SQLite database file")
 	allowDirect := fs.Bool("allow-direct", false, "Refresh accounts that have no proxy from this machine's real IP")
+	force := fs.Bool("force", false, "Also renew accounts whose tokens were handed to OmniRoute (breaks OmniRoute's session for them)")
 	all := fs.Bool("all", false, "Refresh every account")
 	_ = fs.Parse(args)
 
@@ -241,7 +247,7 @@ func runCodexRefresh(args []string) {
 
 	failed := 0
 	for _, a := range targets {
-		_, err := svc.Refresh(ctx, a.ID, codex.RefreshOptions{AllowDirect: *allowDirect})
+		_, err := svc.Refresh(ctx, a.ID, codex.RefreshOptions{AllowDirect: *allowDirect, Force: *force})
 		switch {
 		case err == nil:
 			fmt.Printf("  %s: refreshed\n", a.Email)
@@ -347,6 +353,7 @@ func runCodexUsage(args []string) {
 	all := fs.Bool("all", false, "Every account (default: the one named, or the active one)")
 	cached := fs.Bool("cached", false, "Show the last stored snapshot without contacting OpenAI")
 	allowDirect := fs.Bool("allow-direct", false, "Read accounts that have no proxy from this machine's real IP")
+	force := fs.Bool("force", false, "Also read accounts whose tokens were handed to OmniRoute (breaks OmniRoute's session for them)")
 	_ = fs.Parse(args)
 
 	db, svc := openCodex(*dbPath)
@@ -395,7 +402,7 @@ func runCodexUsage(args []string) {
 				continue
 			}
 		} else {
-			u, err = svc.Usage(ctx, a.ID, codex.RefreshOptions{AllowDirect: *allowDirect})
+			u, err = svc.Usage(ctx, a.ID, codex.RefreshOptions{AllowDirect: *allowDirect, Force: *force})
 		}
 		if err != nil {
 			failed++

@@ -16,6 +16,17 @@ import (
 // because the account has no proxy.
 var ErrProxyRequired = errors.New("this account has no proxy: refusing to contact OpenAI from the real IP (set one with codex-set-proxy, or pass --allow-direct)")
 
+// ErrHandedOff is returned when an account's tokens were handed to OmniRoute. A Codex refresh token is
+// single-use, so renewing or using them here as well would invalidate OmniRoute's copy (or ours).
+var ErrHandedOff = errors.New("this account's tokens were handed to OmniRoute, which now renews them: using them here would break its session (sign in again with codex-add to take it back, or pass --force)")
+
+func checkHandedOff(a *domain.CodexAccount, force bool) error {
+	if force || a.OmniRouteExportedAt.IsZero() {
+		return nil
+	}
+	return fmt.Errorf("%w [since %s]", ErrHandedOff, a.OmniRouteExportedAt.Local().Format("2006-01-02 15:04"))
+}
+
 // Service is the Codex account workflow: add, import, switch and refresh.
 type Service struct {
 	Repo domain.CodexAccountRepository
@@ -151,11 +162,20 @@ func (s *Service) CaptureRotation(ctx context.Context) (*domain.CodexAccount, er
 // network call, so switching never exposes an IP. Close running Codex sessions first: a live CLI
 // keeps the old login in memory and may write it back.
 func (s *Service) Switch(ctx context.Context, id string) (*domain.CodexAccount, error) {
+	return s.SwitchForce(ctx, id, false)
+}
+
+// SwitchForce is Switch that may also use an account handed to OmniRoute (force): the Codex CLI and
+// OmniRoute would then both renew the same single-use token.
+func (s *Service) SwitchForce(ctx context.Context, id string, force bool) (*domain.CodexAccount, error) {
 	if _, err := s.CaptureRotation(ctx); err != nil {
 		return nil, fmt.Errorf("save the current login before switching: %w", err)
 	}
 	acc, err := s.Repo.GetByID(ctx, id)
 	if err != nil {
+		return nil, err
+	}
+	if err := checkHandedOff(acc, force); err != nil {
 		return nil, err
 	}
 	if acc.Status == domain.AccountStatusDisabled {
@@ -181,6 +201,8 @@ func (s *Service) Switch(ctx context.Context, id string) (*domain.CodexAccount, 
 type RefreshOptions struct {
 	// AllowDirect permits a refresh from the real IP for an account with no proxy.
 	AllowDirect bool
+	// Force permits using an account whose tokens were handed to OmniRoute (see ErrHandedOff).
+	Force bool
 }
 
 // Refresh renews an account's tokens through its own proxy and stores the rotated credentials.
@@ -189,6 +211,9 @@ type RefreshOptions struct {
 func (s *Service) Refresh(ctx context.Context, id string, opts RefreshOptions) (*domain.CodexAccount, error) {
 	acc, err := s.Repo.GetByID(ctx, id)
 	if err != nil {
+		return nil, err
+	}
+	if err := checkHandedOff(acc, opts.Force); err != nil {
 		return nil, err
 	}
 	if acc.ProxyURL == "" && !opts.AllowDirect {

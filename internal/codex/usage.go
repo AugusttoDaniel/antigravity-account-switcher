@@ -120,6 +120,9 @@ func (s *Service) Usage(ctx context.Context, id string, opts RefreshOptions) (*d
 	if err != nil {
 		return nil, err
 	}
+	if err := checkHandedOff(acc, opts.Force); err != nil {
+		return nil, err
+	}
 	if acc.ProxyURL == "" && !opts.AllowDirect {
 		return nil, ErrProxyRequired
 	}

@@ -141,16 +141,20 @@
         ? '<span class="badge badge-warning">unusable proxy</span>'
         : a.proxy_url ? '<span class="mono">' + esc(a.proxy_url) + '</span>' : '<span class="badge badge-warning">none</span>';
       const active = a.is_active ? ' <span class="badge badge-success">in use</span>' : '';
+      const handed = a.omniroute_exported_at
+        ? ' <span class="badge badge-neutral" title="OmniRoute renews these tokens now. Using them here too would break its session. Sign in again to take the account back.">in OmniRoute</span>'
+        : '';
+      const lock = a.omniroute_exported_at ? ' disabled' : '';
       return '<tr data-id="' + esc(a.id) + '">' +
-        '<td>' + esc(a.email) + active + '</td>' +
+        '<td>' + esc(a.email) + active + handed + '</td>' +
         '<td>' + esc(a.plan_type || '-') + '</td>' +
         '<td>' + statusBadge(a) + '</td>' +
         '<td class="codex-limits">' + limitsCell(a) + '</td>' +
         '<td class="proxy-cell">' + proxy + '</td>' +
         '<td class="codex-actions">' +
-        '<button type="button" class="btn btn-xs btn-primary" data-act="switch"' + (a.is_active ? ' disabled' : '') + '>Use</button> ' +
-        '<button type="button" class="btn btn-xs btn-secondary" data-act="usage" title="Read this account\'s limits through its proxy">Usage</button> ' +
-        '<button type="button" class="btn btn-xs btn-secondary" data-act="refresh" title="Renew this account\'s tokens">Tokens</button> ' +
+        '<button type="button" class="btn btn-xs btn-primary" data-act="switch"' + (a.is_active || a.omniroute_exported_at ? ' disabled' : '') + '>Use</button> ' +
+        '<button type="button" class="btn btn-xs btn-secondary" data-act="usage"' + lock + ' title="Read this account\'s limits through its proxy">Usage</button> ' +
+        '<button type="button" class="btn btn-xs btn-secondary" data-act="refresh"' + lock + ' title="Renew this account\'s tokens">Tokens</button> ' +
         '<button type="button" class="btn btn-xs btn-secondary" data-act="proxy">Proxy</button> ' +
         '<button type="button" class="btn btn-xs btn-danger-subtle" data-act="remove">Remove</button>' +
         '</td></tr>';
