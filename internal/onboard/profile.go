@@ -102,6 +102,18 @@ func (s *Session) Close() {
 	})
 }
 
+// Opener returns the function that drives the profile's browser to a consent URL, for flows other
+// than the Google one Run handles (e.g. the Codex login). navigate defaults to adspower.Navigate.
+// The caller closes the session.
+func (s *Session) Opener(ctx context.Context, navigate Navigator) func(authURL string) error {
+	if navigate == nil {
+		navigate = adspower.Navigate
+	}
+	return func(authURL string) error {
+		return navigate(ctx, s.started.WS.Puppeteer, s.started.DebugPort, authURL)
+	}
+}
+
 // Run drives the browser to the consent page, completes the OAuth flow through the session's proxy
 // and records the proxy and profile on the account. The browser is always stopped before it
 // returns. If the account was added but its proxy could not be saved, the account is returned
@@ -109,15 +121,7 @@ func (s *Session) Close() {
 func (s *Session) Run(ctx context.Context, flow Flow, store Store, opts Options) (*domain.Account, error) {
 	defer s.Close()
 
-	navigate := opts.Navigate
-	if navigate == nil {
-		navigate = adspower.Navigate
-	}
-	opener := func(authURL string) error {
-		return navigate(ctx, s.started.WS.Puppeteer, s.started.DebugPort, authURL)
-	}
-
-	acc, err := flow.StartLoopbackFlowWithProxy(ctx, opener, opts.URLLogger, s.proxyURL)
+	acc, err := flow.StartLoopbackFlowWithProxy(ctx, s.Opener(ctx, opts.Navigate), opts.URLLogger, s.proxyURL)
 	if err != nil {
 		return nil, fmt.Errorf("OAuth authentication failed: %w", err)
 	}
