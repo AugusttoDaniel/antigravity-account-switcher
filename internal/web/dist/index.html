@@ -137,12 +137,13 @@
           <p class="panel-description">Sign ChatGPT accounts in through their own proxy and choose which one the Codex CLI uses. <strong>Use</strong> rewrites <code>~/.codex/auth.json</code> on this machine; close running Codex sessions first.</p>
         </div>
         <div class="panel-actions">
+          <button type="button" id="codex-usage-all" class="btn btn-secondary" title="Reads every account through its own proxy, one at a time">Refresh usage</button>
           <button type="button" id="codex-add" class="btn btn-primary">Add Codex account</button>
         </div>
       </div>
       <div class="pool-table-wrap">
         <table class="pool-table" aria-label="Codex accounts">
-          <thead><tr><th>Account</th><th>Plan</th><th>Status</th><th>Proxy</th><th>Last refresh</th><th></th></tr></thead>
+          <thead><tr><th>Account</th><th>Plan</th><th>Status</th><th>Limits</th><th>Proxy</th><th></th></tr></thead>
           <tbody id="codex-body"></tbody>
         </table>
       </div>

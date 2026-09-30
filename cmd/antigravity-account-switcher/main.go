@@ -74,6 +74,8 @@ func main() {
 		runCodexSwitch(args)
 	case "codex-refresh":
 		runCodexRefresh(args)
+	case "codex-usage":
+		runCodexUsage(args)
 	case "codex-set-proxy":
 		runCodexSetProxy(args)
 	case "codex-remove":
@@ -117,6 +119,7 @@ func printUsage() {
 	fmt.Println("  codex-list         List Codex accounts, plan, status and proxy")
 	fmt.Println("  codex-switch       Make a Codex account the one the Codex CLI uses (writes ~/.codex/auth.json)")
 	fmt.Println("  codex-refresh      Renew Codex tokens through each account's proxy")
+	fmt.Println("  codex-usage        Show each Codex account's 5-hour and weekly limits (live through its proxy, or --cached)")
 	fmt.Println("  codex-set-proxy    Bind an outbound proxy to a Codex account")
 	fmt.Println("  codex-remove       Remove a Codex account from the switcher")
 	fmt.Println("  set-account-proxy  Assign or update Webshare/outbound proxy URL for a specific account")

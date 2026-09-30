@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -51,6 +52,14 @@ func newCodexEnv(t *testing.T, loginEmail string) *codexEnv {
 	repo := sqlite.NewCodexAccountRepository(db)
 
 	issuer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/wham/usage" {
+			if r.Header.Get("Authorization") == "Bearer at-acct-bad" {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			_, _ = w.Write([]byte(`{"plan_type":"plus","rate_limit":{"allowed":true,"limit_reached":false,"primary_window":{"used_percent":42,"limit_window_seconds":18000,"reset_at":1790000000},"secondary_window":{"used_percent":7,"limit_window_seconds":604800,"reset_at":1790500000}},"credits":{"has_credits":true,"unlimited":false,"balance":"9.99"}}`))
+			return
+		}
 		if strings.Contains(r.Header.Get("Content-Type"), "json") { // refresh
 			_, _ = w.Write([]byte(`{"access_token":"at-new","refresh_token":"rt-new"}`))
 			return
@@ -63,8 +72,11 @@ func newCodexEnv(t *testing.T, loginEmail string) *codexEnv {
 	home := t.TempDir()
 	svc := &codex.Service{
 		Repo: repo, Home: home,
+		Usages: repo,
 		NewClient: func(string) (*codex.Client, error) {
-			return &codex.Client{Issuer: issuer.URL, ClientID: "cid", HTTP: issuer.Client()}, nil
+			// loopbackOnly: a test that forgets to point a URL at the fake must not reach the internet.
+			return &codex.Client{Issuer: issuer.URL, ClientID: "cid", BackendURL: issuer.URL,
+				HTTP: &http.Client{Transport: loopbackOnly{issuer.Client().Transport}}}, nil
 		},
 		Now: func() time.Time { return time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC) },
 	}
@@ -375,5 +387,105 @@ func TestCodexLogin_ManualFallbackWhenThePortCannotBeOpened(t *testing.T) {
 	// Once it is over, a late paste finds nothing waiting.
 	if code, _ := e.call(t, http.MethodPost, "/api/codex/login/complete", map[string]string{"url": redirect + "?code=the-code&state=" + state}); code != http.StatusConflict {
 		t.Fatalf("late paste = %d, want 409", code)
+	}
+}
+
+type loopbackOnly struct{ next http.RoundTripper }
+
+func (l loopbackOnly) RoundTrip(r *http.Request) (*http.Response, error) {
+	if h := r.URL.Hostname(); h != "127.0.0.1" && h != "localhost" {
+		return nil, errors.New("test tried to reach a non-loopback host: " + h)
+	}
+	return l.next.RoundTrip(r)
+}
+
+func TestCodexUsage_ReadCachedAndListed(t *testing.T) {
+	e := newCodexEnv(t, "x@example.com")
+	a := e.seed(t, "a@example.com", "acct-a", codexTestProxy)
+
+	// Nothing stored yet: the list has no usage.
+	_, body := e.call(t, http.MethodGet, "/api/codex/accounts", nil)
+	if strings.Contains(body, `"usage"`) {
+		t.Fatalf("usage appeared before any read: %s", body)
+	}
+
+	code, raw := e.call(t, http.MethodPost, "/api/codex/accounts/usage", map[string]string{"id": a.ID})
+	if code != http.StatusOK {
+		t.Fatalf("status %d: %s", code, raw)
+	}
+	for _, secret := range []string{"at-acct-a", "s3cretPW"} {
+		if strings.Contains(raw, secret) {
+			t.Fatalf("the usage response leaks %q: %s", secret, raw)
+		}
+	}
+
+	_, body = e.call(t, http.MethodGet, "/api/codex/accounts", nil)
+	var views []struct {
+		Usage *struct {
+			Primary struct {
+				UsedPercent int `json:"used_percent"`
+			} `json:"primary"`
+			Secondary struct {
+				UsedPercent int `json:"used_percent"`
+			} `json:"secondary"`
+			Balance string `json:"credit_balance"`
+		} `json:"usage"`
+	}
+	if err := json.Unmarshal([]byte(body), &views); err != nil || len(views) != 1 || views[0].Usage == nil {
+		t.Fatalf("list = %s (%v)", body, err)
+	}
+	if u := views[0].Usage; u.Primary.UsedPercent != 42 || u.Secondary.UsedPercent != 7 || u.Balance != "9.99" {
+		t.Fatalf("cached usage = %+v", u)
+	}
+}
+
+func TestCodexUsage_NeedsAProxy(t *testing.T) {
+	e := newCodexEnv(t, "x@example.com")
+	a := e.seed(t, "a@example.com", "acct-a", "")
+	if code, raw := e.call(t, http.MethodPost, "/api/codex/accounts/usage", map[string]string{"id": a.ID}); code != http.StatusConflict {
+		t.Fatalf("status %d, want 409: %s", code, raw)
+	}
+	if code, _ := e.call(t, http.MethodGet, "/api/codex/accounts/usage", nil); code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET = %d, want 405", code)
+	}
+}
+
+func TestCodexUsage_RefreshAllReportsEachAccount(t *testing.T) {
+	e := newCodexEnv(t, "x@example.com")
+	e.seed(t, "good@example.com", "acct-good", codexTestProxy)
+	e.seed(t, "noproxy@example.com", "acct-np", "")
+	e.seed(t, "bad@example.com", "acct-bad", codexTestProxy) // the fake answers 500 for this one
+
+	code, raw := e.call(t, http.MethodPost, "/api/codex/usage/refresh", nil)
+	if code != http.StatusOK {
+		t.Fatalf("status %d: %s", code, raw)
+	}
+	var out struct {
+		Results []struct {
+			Email string `json:"email"`
+			OK    bool   `json:"ok"`
+			Error string `json:"error"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal([]byte(raw), &out); err != nil || len(out.Results) != 3 {
+		t.Fatalf("results = %s (%v)", raw, err)
+	}
+	by := map[string]bool{}
+	for _, r := range out.Results {
+		by[r.Email] = r.OK
+		if r.Email == "noproxy@example.com" && !strings.Contains(r.Error, "no proxy") {
+			t.Errorf("noproxy error = %q", r.Error)
+		}
+		if strings.Contains(r.Error, "at-acct") || strings.Contains(r.Error, "s3cretPW") {
+			t.Errorf("an error leaks a secret: %q", r.Error)
+		}
+	}
+	if !by["good@example.com"] || by["noproxy@example.com"] || by["bad@example.com"] {
+		t.Fatalf("outcomes = %v, want only the good account to succeed", by)
+	}
+	// The failures did not stop the good one from being stored.
+	_, body := e.call(t, http.MethodGet, "/api/codex/accounts", nil)
+	if strings.Count(body, `"used_percent"`) != 2 { // primary + secondary of the one good account
+		t.Fatalf("list = %s", body)
 	}
 }

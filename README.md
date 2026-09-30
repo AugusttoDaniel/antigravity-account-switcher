@@ -288,6 +288,13 @@ antigravity-account-switcher codex-set-proxy me@example.com "http://user:pass@ho
 - `codex-refresh` goes through the account's own proxy and fails closed if it has none or the
   proxy is unusable. An `invalid_grant` marks the account `error`: sign in again with `codex-add`.
 - An email shared by a personal and a workspace login is ambiguous: pass the account id.
+- **Limits:** `codex-usage [--all] [--cached] [account]` shows each account's 5-hour and weekly
+  windows, reset times, credits and whether the limit was reached. It reads the same endpoint the
+  Codex CLI uses (`/backend-api/wham/usage`) through the account's own proxy and fails closed without
+  one; an expired access token is renewed once and the read retried. `--cached` shows the last
+  stored snapshot with no network. The dashboard shows the same as bars in a **Limits** column, with
+  **Usage** per account and **Refresh usage** for all (read one at a time, never in a burst). Nothing
+  polls on a timer: limits are read only when you ask.
 - **Dashboard:** the **OpenAI Codex Accounts** panel lists the accounts (proxies masked, tokens never
   sent to the page) and offers Use, Refresh, Proxy, Remove and **Add Codex account**, through the
   same proxy pool and AliasMode profile as Google accounts.

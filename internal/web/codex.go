@@ -26,8 +26,10 @@ func WithCodexService(svc *codex.Service) Option {
 // its credentials (editing replaces it wholesale, so the secret is never needed back).
 type CodexAccountView struct {
 	*domain.CodexAccount
-	ProxyURL     string `json:"proxy_url,omitempty"`
-	ProxyInvalid bool   `json:"proxy_invalid,omitempty"`
+	// Usage is the last stored snapshot of the account's limits (nil until one is read).
+	Usage        *domain.CodexUsage `json:"usage,omitempty"`
+	ProxyURL     string             `json:"proxy_url,omitempty"`
+	ProxyInvalid bool               `json:"proxy_invalid,omitempty"`
 }
 
 func newCodexAccountView(a *domain.CodexAccount) *CodexAccountView {
@@ -92,6 +94,10 @@ func (a *APIHandler) HandleCodex(w http.ResponseWriter, r *http.Request) {
 		a.codexSetProxy(w, r)
 	case "accounts/remove":
 		a.codexRemove(w, r)
+	case "accounts/usage":
+		a.codexUsage(w, r)
+	case "usage/refresh":
+		a.codexUsageRefreshAll(w, r)
 	case "login/start":
 		a.codexLoginStart(w, r)
 	case "login/complete":
@@ -116,9 +122,15 @@ func (a *APIHandler) codexList(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusInternalServerError, "failed to list Codex accounts", err)
 		return
 	}
+	var usages map[string]*domain.CodexUsage
+	if a.codexSvc.Usages != nil {
+		usages, _ = a.codexSvc.Usages.ListUsage(r.Context())
+	}
 	views := make([]*CodexAccountView, 0, len(accs))
 	for _, acc := range accs {
-		views = append(views, newCodexAccountView(acc))
+		v := newCodexAccountView(acc)
+		v.Usage = usages[acc.ID]
+		views = append(views, v)
 	}
 	writeJSON(w, http.StatusOK, views)
 }
@@ -410,4 +422,55 @@ func modeOrLink(m string) string {
 		return "link"
 	}
 	return m
+}
+
+// codexUsage reads one account's limits through its own proxy and stores them.
+func (a *APIHandler) codexUsage(w http.ResponseWriter, r *http.Request) {
+	acc, ok := a.codexAccountFromRequest(w, r)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	defer cancel()
+	u, err := a.codexSvc.Usage(ctx, acc.ID, codex.RefreshOptions{})
+	switch {
+	case errors.Is(err, codex.ErrProxyRequired):
+		writeErrorJSON(w, http.StatusConflict, "this account has no proxy", err)
+	case errors.Is(err, codex.ErrInvalidGrant):
+		writeErrorJSON(w, http.StatusUnauthorized, "the account must sign in again", err)
+	case err != nil:
+		writeErrorJSON(w, http.StatusBadGateway, "could not read the usage", err)
+	default:
+		writeJSON(w, http.StatusOK, map[string]any{"status": "read", "usage": u})
+	}
+}
+
+type codexUsageResult struct {
+	ID    string `json:"id"`
+	Email string `json:"email"`
+	OK    bool   `json:"ok"`
+	Error string `json:"error,omitempty"`
+}
+
+// codexUsageRefreshAll reads every account in turn (one at a time: each goes out through its own
+// proxy, and a burst would only look like one). A failure on one account does not stop the rest.
+func (a *APIHandler) codexUsageRefreshAll(w http.ResponseWriter, r *http.Request) {
+	accs, err := a.codexSvc.Repo.List(r.Context())
+	if err != nil {
+		writeErrorJSON(w, http.StatusInternalServerError, "failed to list Codex accounts", err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Minute)
+	defer cancel()
+	results := make([]codexUsageResult, 0, len(accs))
+	for _, acc := range accs {
+		res := codexUsageResult{ID: acc.ID, Email: acc.Email}
+		if _, err := a.codexSvc.Usage(ctx, acc.ID, codex.RefreshOptions{}); err != nil {
+			res.Error = err.Error()
+		} else {
+			res.OK = true
+		}
+		results = append(results, res)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"results": results})
 }

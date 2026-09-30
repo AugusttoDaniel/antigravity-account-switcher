@@ -135,6 +135,17 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_codex_accounts_single_active
 ON codex_accounts(is_active) WHERE is_active = 1;
 `,
 	},
+	{
+		Version:     5,
+		Description: "add_codex_usage",
+		SQL: `
+CREATE TABLE IF NOT EXISTS codex_usage (
+    account_id TEXT PRIMARY KEY REFERENCES codex_accounts(id) ON DELETE CASCADE,
+    payload TEXT NOT NULL,
+    fetched_at DATETIME NOT NULL
+);
+`,
+	},
 }
 
 // Migrate applies all pending schema migrations to the database.

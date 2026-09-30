@@ -338,3 +338,116 @@ func manualFallback() (<-chan codex.Paste, func(error)) {
 	}
 	return pasted, start
 }
+
+// runCodexUsage shows each account's rate-limit windows: read live through the account's own proxy,
+// or (--cached) from the last snapshot with no network at all.
+func runCodexUsage(args []string) {
+	fs := flag.NewFlagSet("codex-usage", flag.ExitOnError)
+	dbPath := fs.String("db", defaultDBPath(), "Path to SQLite database file")
+	all := fs.Bool("all", false, "Every account (default: the one named, or the active one)")
+	cached := fs.Bool("cached", false, "Show the last stored snapshot without contacting OpenAI")
+	allowDirect := fs.Bool("allow-direct", false, "Read accounts that have no proxy from this machine's real IP")
+	_ = fs.Parse(args)
+
+	db, svc := openCodex(*dbPath)
+	defer db.Close()
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	var targets []*domain.CodexAccount
+	switch {
+	case *all:
+		list, err := svc.Repo.List(ctx)
+		if err != nil {
+			codexFatal("Error: %v", err)
+		}
+		targets = list
+	case fs.NArg() == 1:
+		a, err := svc.Resolve(ctx, fs.Arg(0))
+		if err != nil {
+			codexFatal("Error: %v", err)
+		}
+		targets = []*domain.CodexAccount{a}
+	default:
+		a, err := svc.Repo.GetActive(ctx)
+		if err != nil {
+			codexFatal("No account given and none is active: codex-usage [flags] <account_id|email>   (or --all)")
+		}
+		targets = []*domain.CodexAccount{a}
+	}
+	if len(targets) == 0 {
+		fmt.Println("No Codex accounts yet. Run 'codex-add' (or 'codex-import').")
+		return
+	}
+
+	fmt.Printf("%-32s  %-8s  %-26s  %-26s  %s\n", "ACCOUNT", "PLAN", "5H WINDOW", "WEEKLY", "CREDITS")
+	failed := 0
+	for _, a := range targets {
+		var u *domain.CodexUsage
+		var err error
+		if *cached {
+			if svc.Usages == nil {
+				codexFatal("Error: usage is not stored")
+			}
+			u, err = svc.Usages.GetUsage(ctx, a.ID)
+			if errors.Is(err, domain.ErrCodexAccountNotFound) {
+				fmt.Printf("%-32s  %-8s  (no snapshot yet: run without --cached)\n", a.Email, orDash(a.PlanType))
+				continue
+			}
+		} else {
+			u, err = svc.Usage(ctx, a.ID, codex.RefreshOptions{AllowDirect: *allowDirect})
+		}
+		if err != nil {
+			failed++
+			fmt.Printf("%-32s  %-8s  failed: %v\n", a.Email, orDash(a.PlanType), err)
+			continue
+		}
+		credits := "-"
+		switch {
+		case u.UnlimitedCreds:
+			credits = "unlimited"
+		case u.HasCredits:
+			credits = orDash(u.CreditBalance)
+		}
+		flag := ""
+		if u.LimitReached {
+			flag = "  LIMIT REACHED"
+		}
+		fmt.Printf("%-32s  %-8s  %-26s  %-26s  %s%s\n", a.Email, orDash(firstNonEmpty(u.PlanType, a.PlanType)),
+			formatUsageWindow(u.Primary, time.Now()), formatUsageWindow(u.Secondary, time.Now()), credits, flag)
+	}
+	if failed > 0 {
+		os.Exit(1)
+	}
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// formatUsageWindow renders "42% used, resets in 3h12m".
+func formatUsageWindow(w *domain.CodexUsageWindow, now time.Time) string {
+	if w == nil {
+		return "-"
+	}
+	if w.ResetAt.IsZero() {
+		return fmt.Sprintf("%d%% used", w.UsedPercent)
+	}
+	d := w.ResetAt.Sub(now)
+	if d <= 0 {
+		return fmt.Sprintf("%d%% used (reset due)", w.UsedPercent)
+	}
+	switch {
+	case d >= 48*time.Hour:
+		return fmt.Sprintf("%d%% used, resets in %dd%dh", w.UsedPercent, int(d.Hours())/24, int(d.Hours())%24)
+	case d >= time.Hour:
+		return fmt.Sprintf("%d%% used, resets in %dh%02dm", w.UsedPercent, int(d.Hours()), int(d.Minutes())%60)
+	default:
+		return fmt.Sprintf("%d%% used, resets in %dm", w.UsedPercent, int(d.Minutes()))
+	}
+}

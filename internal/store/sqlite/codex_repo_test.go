@@ -181,3 +181,51 @@ func TestCodexRepo_IsolatedFromAntigravityAccounts(t *testing.T) {
 		t.Fatalf("Antigravity list = %d accounts, %v", len(accs), err)
 	}
 }
+
+func TestCodexRepo_UsageSnapshots(t *testing.T) {
+	repo, _ := setupCodexRepo(t)
+	ctx := context.Background()
+	a, _ := repo.Upsert(ctx, codexAcc("a@example.com", "1"))
+
+	if _, err := repo.GetUsage(ctx, a.ID); !errors.Is(err, domain.ErrCodexAccountNotFound) {
+		t.Fatalf("GetUsage with none = %v", err)
+	}
+	reset := time.Date(2026, 10, 1, 5, 0, 0, 0, time.UTC)
+	u := &domain.CodexUsage{
+		AccountID: a.ID, PlanType: "plus", Allowed: true,
+		Primary:       &domain.CodexUsageWindow{UsedPercent: 42, WindowSeconds: 18000, ResetAt: reset},
+		Secondary:     &domain.CodexUsageWindow{UsedPercent: 7, WindowSeconds: 604800, ResetAt: reset.Add(72 * time.Hour)},
+		CreditBalance: "12.5", HasCredits: true,
+		FetchedAt: time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC),
+	}
+	if err := repo.SaveUsage(ctx, u); err != nil {
+		t.Fatal(err)
+	}
+	got, err := repo.GetUsage(ctx, a.ID)
+	if err != nil || got.Primary.UsedPercent != 42 || got.Secondary.UsedPercent != 7 || !got.Primary.ResetAt.Equal(reset) || got.CreditBalance != "12.5" {
+		t.Fatalf("usage = %+v, %v", got, err)
+	}
+
+	// A second save replaces the first.
+	u.Primary.UsedPercent = 80
+	u.LimitReached = true
+	if err := repo.SaveUsage(ctx, u); err != nil {
+		t.Fatal(err)
+	}
+	all, _ := repo.ListUsage(ctx)
+	if len(all) != 1 || all[a.ID].Primary.UsedPercent != 80 || !all[a.ID].LimitReached {
+		t.Fatalf("list = %+v", all)
+	}
+
+	if err := repo.SaveUsage(ctx, &domain.CodexUsage{}); err == nil {
+		t.Fatal("a snapshot with no account id must be refused")
+	}
+
+	// Removing the account drops its snapshot.
+	if err := repo.Delete(ctx, a.ID); err != nil {
+		t.Fatal(err)
+	}
+	if all, _ := repo.ListUsage(ctx); len(all) != 0 {
+		t.Fatalf("usage survived the account: %+v", all)
+	}
+}

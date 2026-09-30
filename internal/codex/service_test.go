@@ -143,8 +143,9 @@ func newSvcEnv(t *testing.T) *svcEnv {
 	e.issuer = func(h http.HandlerFunc) { handler = h }
 	e.svc = &Service{
 		Repo: e.repo, Home: e.home,
+		Usages: e.repo,
 		NewClient: func(string) (*Client, error) {
-			return &Client{Issuer: srv.URL, ClientID: "cid", HTTP: srv.Client()}, nil
+			return &Client{Issuer: srv.URL, ClientID: "cid", HTTP: &http.Client{Transport: localOnly{srv.Client().Transport}}, BackendURL: srv.URL}, nil
 		},
 		Now: func() time.Time { return time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC) },
 	}
@@ -486,4 +487,15 @@ func TestCodeFromRedirect(t *testing.T) {
 			t.Errorf("%s: the error echoes the pasted code: %v", name, err)
 		}
 	}
+}
+
+// localOnly refuses any request that is not for the loopback test server, so a test that forgets to
+// point a URL at its fake can never reach the real internet.
+type localOnly struct{ next http.RoundTripper }
+
+func (l localOnly) RoundTrip(r *http.Request) (*http.Response, error) {
+	if h := r.URL.Hostname(); h != "127.0.0.1" && h != "localhost" {
+		return nil, errors.New("test tried to reach a non-loopback host: " + h)
+	}
+	return l.next.RoundTrip(r)
 }
