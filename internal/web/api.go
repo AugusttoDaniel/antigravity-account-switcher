@@ -14,6 +14,7 @@ import (
 	"time"
 	_ "time/tzdata"
 
+	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/codex"
 	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/config"
 	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/domain"
 	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/egress"
@@ -48,6 +49,17 @@ type APIHandler struct {
 	// profileNavigate opens a URL in a profile's browser (default: adspower.Navigate); tests replace them.
 	profileAPIFactory func(baseURL, apiKey string) profileAPI
 	profileNavigate   onboard.Navigator
+
+	// codexSvc serves the Codex (ChatGPT) account endpoints; nil leaves them disabled. A sign-in holds
+	// codexLoginBusy because the OAuth callback port is fixed.
+	codexSvc        *codex.Service
+	codexLoginBusy  int32
+	codexRandomPort bool // tests only: do not bind the fixed callback port
+	codexPort       int  // tests only: a specific callback port
+	// codexPasteCh delivers a pasted redirect URL to the running sign-in (manual fallback when the
+	// callback port cannot be bound); nil when none is running.
+	codexPasteMu sync.Mutex
+	codexPasteCh chan codex.Paste
 }
 
 // SetConfig sets the configuration pointer for APIHandler.

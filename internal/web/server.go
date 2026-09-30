@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/codex"
 	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/config"
 	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/domain"
 	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/oauth"
@@ -33,6 +34,7 @@ type ServerConfig struct {
 	Poller               QuotaPoller
 	AppConfig            *config.Config
 	FallbackConfigSetter FallbackConfigSetter
+	CodexService         *codex.Service
 	ReadTimeout          time.Duration
 	WriteTimeout         time.Duration
 }
@@ -144,6 +146,7 @@ func NewServer(
 	if cfg.FallbackConfigSetter != nil {
 		api.SetFallbackConfigSetter(cfg.FallbackConfigSetter)
 	}
+	api.codexSvc = cfg.CodexService
 
 	return &Server{
 		cfg:          cfg,
@@ -198,6 +201,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.HasPrefix(path, "/api/omniroute/") {
 		s.api.HandleOmniRoute(w, r)
+		return
+	}
+	if strings.HasPrefix(path, "/api/codex/") {
+		s.api.HandleCodex(w, r)
 		return
 	}
 	if path == "/api/onboarding/status" {

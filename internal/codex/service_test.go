@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -113,8 +115,8 @@ func TestLoginReportsBusyPort(t *testing.T) {
 		port = port*10 + int(r-'0')
 	}
 	_, err := Login(context.Background(), LoginOptions{Client: loginIssuer(t), Port: port, Opener: func(string) error { return nil }})
-	if err == nil || !strings.Contains(err.Error(), "busy") {
-		t.Fatalf("err = %v, want a busy-port error", err)
+	if err == nil || !strings.Contains(err.Error(), "cannot be opened") {
+		t.Fatalf("err = %v, want a port error", err)
 	}
 }
 
@@ -400,5 +402,88 @@ func TestProxiedClientIsFailClosed(t *testing.T) {
 	}
 	if _, err := ProxiedClient("http://user:pass@127.0.0.1:8080"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// ---- manual fallback (port cannot be bound) ----
+
+// occupy binds a loopback port so the login's listener cannot have it.
+func occupy(t *testing.T) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	return ln.Addr().(*net.TCPAddr).Port
+}
+
+func TestLoginManualFallbackCompletesFromPastedURL(t *testing.T) {
+	port := occupy(t)
+	pasted := make(chan Paste, 4)
+	manual := make(chan error, 1)
+
+	var state string
+	tr, err := Login(context.Background(), LoginOptions{
+		Client: loginIssuer(t), Port: port, Timeout: 5 * time.Second, Pasted: pasted,
+		OnManual: func(reason error) { manual <- reason },
+		Opener: func(authURL string) error {
+			u, _ := url.Parse(authURL)
+			state = u.Query().Get("state")
+			// The browser lands on a page that cannot load; the user pastes its address. A first
+			// attempt with a typo must not end the sign-in.
+			res1 := make(chan error, 1)
+			pasted <- Paste{URL: "http://127.0.0.1:" + strconv.Itoa(port) + "/auth/callback?code=good-code&state=WRONG", Result: res1}
+			go func() {
+				if e := <-res1; e == nil {
+					t.Error("a wrong state must be rejected")
+				}
+				pasted <- Paste{URL: "http://127.0.0.1:" + strconv.Itoa(port) + "/auth/callback?code=good-code&state=" + state}
+			}()
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tr.RefreshToken != "r" {
+		t.Fatalf("tokens = %+v", tr)
+	}
+	if len(manual) != 1 {
+		t.Fatal("OnManual was not called")
+	}
+}
+
+func TestLoginWithoutPasteFailsWhenPortIsTaken(t *testing.T) {
+	port := occupy(t)
+	_, err := Login(context.Background(), LoginOptions{Client: loginIssuer(t), Port: port, Opener: func(string) error { return nil }})
+	if err == nil || !strings.Contains(err.Error(), "excludedportrange") {
+		t.Fatalf("err = %v, want a hint about reserved ports", err)
+	}
+}
+
+func TestCodeFromRedirect(t *testing.T) {
+	good := "http://127.0.0.1:1455/auth/callback?code=abc&scope=openid&state=ST"
+	if c, err := codeFromRedirect(good, "ST"); err != nil || c != "abc" {
+		t.Fatalf("good = %q, %v", c, err)
+	}
+	if c, err := codeFromRedirect("?code=abc&state=ST#frag", "ST"); err != nil || c != "abc" {
+		t.Fatalf("bare query = %q, %v", c, err)
+	}
+	for name, raw := range map[string]string{
+		"empty":      "  ",
+		"no query":   "http://127.0.0.1:1455/auth/callback",
+		"bad state":  "http://x/?code=SECRETCODE&state=OTHER",
+		"no code":    "http://x/?state=ST",
+		"error page": "http://x/?error=access_denied&state=ST",
+	} {
+		_, err := codeFromRedirect(raw, "ST")
+		if err == nil {
+			t.Errorf("%s: expected an error", name)
+			continue
+		}
+		if strings.Contains(err.Error(), "SECRETCODE") {
+			t.Errorf("%s: the error echoes the pasted code: %v", name, err)
+		}
 	}
 }

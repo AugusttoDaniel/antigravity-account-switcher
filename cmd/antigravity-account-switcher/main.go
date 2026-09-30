@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/codex"
 	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/config"
 	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/domain"
 	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/egress"
@@ -272,6 +273,13 @@ func runServe(args []string) {
 	}
 	defer func() { _ = poller.Stop() }()
 
+	codexHome, err := codex.Home()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	codexSvc := codex.NewService(sqlite.NewCodexAccountRepository(db), codexHome)
+
 	metricsService := metrics.NewService(metricsRepo, accRepo)
 
 	server, err := web.NewServer(
@@ -288,6 +296,7 @@ func runServe(args []string) {
 		web.WithPoller(poller),
 		web.WithConfig(cfg),
 		web.WithFallbackConfigSetter(failoverEngine),
+		web.WithCodexService(codexSvc),
 	)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating web server: %v\n", err)
