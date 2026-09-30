@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"flag"
@@ -84,6 +85,7 @@ func runCodexAdd(args []string) {
 		Client: client, Port: codex.CallbackPort, Timeout: *timeout,
 		URLLogger: func(u string) { fmt.Printf("\nSign-in URL:\n%s\n\n", u) },
 	}
+	opts.Pasted, opts.OnManual = manualFallback()
 	var usedProfile string
 	switch {
 	case *useProfile:
@@ -305,4 +307,34 @@ func orDash(s string) string {
 		return "-"
 	}
 	return s
+}
+
+// manualFallback lets codex-add finish when the OAuth callback port cannot be opened (Windows
+// reserves 1374-1473, which contains 1455, for Hyper-V/WSL/Docker): the user pastes the address of
+// the page that fails to load after signing in. The reader only starts in that case.
+func manualFallback() (<-chan codex.Paste, func(error)) {
+	pasted := make(chan codex.Paste, 1)
+	start := func(reason error) {
+		fmt.Fprintf(os.Stderr, "Note: the OAuth callback port %d cannot be opened on this machine (%v).\n", codex.CallbackPort, reason)
+		fmt.Fprintln(os.Stderr, "Sign in with the URL above. The browser will then land on a page that fails to load:")
+		fmt.Fprintln(os.Stderr, "copy its FULL address from the address bar and paste it here, then press Enter.")
+		go func() {
+			sc := bufio.NewScanner(os.Stdin)
+			sc.Buffer(make([]byte, 64*1024), 1<<20)
+			for sc.Scan() {
+				line := strings.TrimSpace(sc.Text())
+				if line == "" {
+					continue
+				}
+				res := make(chan error, 1)
+				pasted <- codex.Paste{URL: line, Result: res}
+				if err := <-res; err != nil {
+					fmt.Fprintf(os.Stderr, "  %v\nPaste it again: ", err)
+					continue
+				}
+				return
+			}
+		}()
+	}
+	return pasted, start
 }

@@ -1610,6 +1610,11 @@ body.privacy-mode .blurred-email {
    ========================================================================= */
 .proxy-dialog {
   width: min(480px, calc(100vw - 2rem));
+  /* The global `* { margin: 0 }` reset cancels the UA's `margin: auto`, which is what centers a
+     modal <dialog>; restore it explicitly. Tall content scrolls instead of leaving the screen. */
+  margin: auto;
+  max-height: calc(100vh - 2rem);
+  overflow-y: auto;
   padding: 1.25rem;
   background: var(--bg-surface-elevated);
   color: var(--text-primary);
@@ -1720,3 +1725,7 @@ body.privacy-mode .blurred-email {
 .oauth-mode-option.is-unavailable { opacity: 0.6; cursor: not-allowed; }
 .oauth-mode-option small.is-error { color: var(--color-warning); }
 .oauth-mode #oauth-mode-recheck { align-self: flex-start; }
+
+/* OpenAI Codex accounts panel */
+.codex-actions { white-space: nowrap; text-align: right; }
+.codex-actions .btn + .btn { margin-left: 0.25rem; }

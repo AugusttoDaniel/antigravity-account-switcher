@@ -288,6 +288,14 @@ antigravity-account-switcher codex-set-proxy me@example.com "http://user:pass@ho
 - `codex-refresh` goes through the account's own proxy and fails closed if it has none or the
   proxy is unusable. An `invalid_grant` marks the account `error`: sign in again with `codex-add`.
 - An email shared by a personal and a workspace login is ambiguous: pass the account id.
+- **Dashboard:** the **OpenAI Codex Accounts** panel lists the accounts (proxies masked, tokens never
+  sent to the page) and offers Use, Refresh, Proxy, Remove and **Add Codex account**, through the
+  same proxy pool and AliasMode profile as Google accounts.
+- **Callback port blocked (common on Windows):** Windows can reserve `1374-1473` for Hyper-V, WSL or
+  Docker (`netsh int ipv4 show excludedportrange protocol=tcp`), which contains `1455`, so no program
+  can listen there. The switcher detects it and switches to a manual step: after you sign in, the
+  browser lands on a page that fails to load; copy its full address and paste it into the dashboard
+  (or into the terminal, for `codex-add`). The address carries a one-time code, so do not share it.
 - Protocol constants (issuer, public client id, scopes, `auth.json` layout) come from the
   Apache-2.0 [openai/codex](https://github.com/openai/codex) repository. Using several accounts
   is subject to OpenAI's terms; you are responsible for complying with them.

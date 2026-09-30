@@ -125,6 +125,30 @@
       </div>
     </section>
 
+    <!-- Section 2.1: OpenAI Codex (ChatGPT) accounts. Kept apart from the Antigravity pool: they are
+         never routed, polled or exported. Tokens never reach this page; proxies are shown masked. -->
+    <section class="panel" id="codex-section" aria-labelledby="codex-section-title" hidden>
+      <div class="panel-header">
+        <div class="panel-title-group">
+          <h2 id="codex-section-title" class="panel-title">
+            OpenAI Codex Accounts
+            <span id="codex-count-badge" class="badge badge-neutral">0 accounts</span>
+          </h2>
+          <p class="panel-description">Sign ChatGPT accounts in through their own proxy and choose which one the Codex CLI uses. <strong>Use</strong> rewrites <code>~/.codex/auth.json</code> on this machine; close running Codex sessions first.</p>
+        </div>
+        <div class="panel-actions">
+          <button type="button" id="codex-add" class="btn btn-primary">Add Codex account</button>
+        </div>
+      </div>
+      <div class="pool-table-wrap">
+        <table class="pool-table" aria-label="Codex accounts">
+          <thead><tr><th>Account</th><th>Plan</th><th>Status</th><th>Proxy</th><th>Last refresh</th><th></th></tr></thead>
+          <tbody id="codex-body"></tbody>
+        </table>
+      </div>
+      <p id="codex-empty" class="panel-description" hidden>No Codex accounts yet. Add one, or run <code>codex-import</code> to adopt the Codex CLI's current login.</p>
+    </section>
+
     <!-- Section 2.2: Proxy Pool. Bulk import with live validation. Credentials never come back
          from the API: results and the pool list are masked, and an import re-sends the pasted text. -->
     <section class="panel" aria-labelledby="pool-section-title">
@@ -519,6 +543,61 @@
     </form>
   </dialog>
 
+  <!-- Add a Codex account, or change its proxy. The sign-in and every token refresh go through the
+       account's own proxy; the sign-in link is shown instead of opened so this computer's default
+       browser never reaches OpenAI from the real IP. -->
+  <dialog id="codex-dialog" class="proxy-dialog" aria-labelledby="codex-dialog-title">
+    <form id="codex-dialog-form" method="dialog" novalidate>
+      <h2 id="codex-dialog-title" class="proxy-dialog-title">Add a Codex account</h2>
+      <p id="codex-dialog-account" class="proxy-dialog-account mono" hidden></p>
+      <fieldset class="oauth-mode" id="codex-dialog-modes">
+        <legend class="proxy-dialog-label">How do you want to sign in?</legend>
+        <label class="oauth-mode-option">
+          <input type="radio" name="codex-mode" value="profile" id="codex-mode-profile">
+          <span><strong>AliasMode profile</strong> (one click)
+            <small id="codex-mode-profile-hint">Checking for AliasMode…</small>
+          </span>
+        </label>
+        <label class="oauth-mode-option">
+          <input type="radio" name="codex-mode" value="link" id="codex-mode-link">
+          <span><strong>Show the sign-in link</strong>
+            <small>You open it yourself, in a browser profile that uses the same proxy. Close any running <code>codex login</code> first: the callback port (1455) is fixed.</small>
+          </span>
+        </label>
+      </fieldset>
+      <div id="codex-dialog-pool" class="proxy-dialog-pool" hidden>
+        <label for="codex-dialog-pool-select" class="proxy-dialog-label">Proxy from the pool</label>
+        <select id="codex-dialog-pool-select" class="form-select mono"></select>
+        <p class="proxy-dialog-or">or type a proxy URL</p>
+      </div>
+      <label for="codex-dialog-input" class="proxy-dialog-label">Proxy URL</label>
+      <input id="codex-dialog-input" class="proxy-dialog-input mono" type="text" autocomplete="off" spellcheck="false" placeholder="http://user:pass@host:port">
+      <p id="codex-dialog-error" class="proxy-dialog-error" role="alert" hidden></p>
+      <div id="codex-dialog-link" class="oauth-dialog-link" hidden>
+        <label for="codex-dialog-url" id="codex-dialog-url-label" class="proxy-dialog-label">Sign-in link</label>
+        <div class="oauth-dialog-url-row">
+          <input id="codex-dialog-url" class="text-input mono" type="text" readonly>
+          <button type="button" id="codex-dialog-copy" class="btn btn-secondary">Copy link</button>
+        </div>
+        <p id="codex-dialog-status" class="proxy-dialog-hint" aria-live="polite"></p>
+      </div>
+      <div id="codex-dialog-paste" class="oauth-dialog-link" hidden>
+        <p class="proxy-dialog-hint">This machine cannot open the sign-in callback port (Windows often reserves it). After you sign in, the browser lands on a page that fails to load: copy its full address from the address bar and paste it here.</p>
+        <label for="codex-dialog-paste-input" class="proxy-dialog-label">Address of the page that failed to load</label>
+        <div class="oauth-dialog-url-row">
+          <input id="codex-dialog-paste-input" class="text-input mono" type="text" autocomplete="off" spellcheck="false" placeholder="http://127.0.0.1:1455/auth/callback?code=…&amp;state=…">
+          <button type="button" id="codex-dialog-paste-btn" class="btn btn-primary">Complete sign-in</button>
+        </div>
+        <p id="codex-dialog-paste-error" class="proxy-dialog-error" role="alert" hidden></p>
+      </div>
+      <div class="proxy-dialog-actions">
+        <span class="proxy-dialog-spacer"></span>
+        <button type="button" id="codex-dialog-close" class="btn btn-secondary">Close</button>
+        <button type="submit" id="codex-dialog-start" class="btn btn-primary" disabled>Start sign-in</button>
+      </div>
+    </form>
+  </dialog>
+
   <!-- Global Toast Notifications Container -->
   <div id="toast-container" class="toast-container" aria-live="assertive"></div>
 
@@ -530,5 +609,6 @@
   </footer>
 
   <script src="/dist/app.js"></script>
+  <script src="/dist/codex.js"></script>
 </body>
 </html>
