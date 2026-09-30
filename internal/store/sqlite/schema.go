@@ -105,6 +105,36 @@ ALTER TABLE accounts ADD COLUMN proxy_url TEXT NOT NULL DEFAULT '';
 ALTER TABLE accounts ADD COLUMN adspower_profile_id TEXT NOT NULL DEFAULT '';
 `,
 	},
+	{
+		Version:     4,
+		Description: "add_codex_accounts",
+		SQL: `
+CREATE TABLE IF NOT EXISTS codex_accounts (
+    id TEXT PRIMARY KEY,
+    email TEXT NOT NULL,
+    chatgpt_account_id TEXT NOT NULL DEFAULT '',
+    plan_type TEXT NOT NULL DEFAULT '',
+    id_token TEXT NOT NULL DEFAULT '',
+    access_token TEXT NOT NULL DEFAULT '',
+    refresh_token TEXT NOT NULL,
+    last_refresh DATETIME NOT NULL DEFAULT '1970-01-01T00:00:00Z',
+    proxy_url TEXT NOT NULL DEFAULT '',
+    adspower_profile_id TEXT NOT NULL DEFAULT '',
+    is_active INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'active',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- One login per (email, ChatGPT account): a personal and a workspace login may share an email.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_codex_accounts_identity
+ON codex_accounts(lower(email), chatgpt_account_id);
+
+-- At most ONE active Codex account.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_codex_accounts_single_active
+ON codex_accounts(is_active) WHERE is_active = 1;
+`,
+	},
 }
 
 // Migrate applies all pending schema migrations to the database.

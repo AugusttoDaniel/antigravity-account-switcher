@@ -63,6 +63,20 @@ func main() {
 		runImportAdsPower(args)
 	case "export-omniroute":
 		runExportOmniRoute(args)
+	case "codex-add":
+		runCodexAdd(args)
+	case "codex-import":
+		runCodexImport(args)
+	case "codex-list":
+		runCodexList(args)
+	case "codex-switch":
+		runCodexSwitch(args)
+	case "codex-refresh":
+		runCodexRefresh(args)
+	case "codex-set-proxy":
+		runCodexSetProxy(args)
+	case "codex-remove":
+		runCodexRemove(args)
 	case "set-account-proxy":
 		runSetAccountProxy(args)
 	case "list-accounts":
@@ -97,6 +111,13 @@ func printUsage() {
 	fmt.Println("  add-account-adspower  Onboard a Google account through an isolated ADS Power profile + proxy")
 	fmt.Println("  import-adspower    Batch-onboard every ADS Power profile as an account (reuses each profile's proxy)")
 	fmt.Println("  export-omniroute   Export accounts to OmniRoute (files and/or its API), binding each account's proxy")
+	fmt.Println("  codex-add          Sign in an OpenAI Codex (ChatGPT) account through its own proxy (--adspower for an isolated profile)")
+	fmt.Println("  codex-import       Import the Codex CLI's current auth.json as an account")
+	fmt.Println("  codex-list         List Codex accounts, plan, status and proxy")
+	fmt.Println("  codex-switch       Make a Codex account the one the Codex CLI uses (writes ~/.codex/auth.json)")
+	fmt.Println("  codex-refresh      Renew Codex tokens through each account's proxy")
+	fmt.Println("  codex-set-proxy    Bind an outbound proxy to a Codex account")
+	fmt.Println("  codex-remove       Remove a Codex account from the switcher")
 	fmt.Println("  set-account-proxy  Assign or update Webshare/outbound proxy URL for a specific account")
 	fmt.Println("  list-accounts      Display registered accounts, their proxy URLs, and quota availability")
 	fmt.Println("  refresh-quotas     Force live quota synchronization from Google for all accounts")

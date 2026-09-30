@@ -260,6 +260,41 @@ confirmação) para as contas cujo proxy é diferente ou está ausente lá.
 
 ---
 
+### Contas OpenAI Codex
+
+O mesmo isolamento vale para logins do ChatGPT/Codex. As contas Codex ficam numa tabela própria e
+nunca entram no pool de roteamento do Antigravity, no poller de cotas nem na exportação pro OmniRoute.
+
+```bash
+# Login por um proxy dedicado, dentro de um perfil isolado do AliasMode/ADS Power (recomendado)
+antigravity-account-switcher codex-add --adspower --proxy "http://usuario:senha@host:porta"
+# ou imprime a URL de login e você a abre num navegador que já usa esse proxy
+antigravity-account-switcher codex-add --proxy "http://usuario:senha@host:porta"
+
+antigravity-account-switcher codex-import          # adota o ~/.codex/auth.json atual do Codex CLI
+antigravity-account-switcher codex-list
+antigravity-account-switcher codex-switch eu@example.com   # escreve ~/.codex/auth.json (respeita $CODEX_HOME)
+antigravity-account-switcher codex-refresh --all           # renova os tokens pelo proxy de cada conta
+antigravity-account-switcher codex-set-proxy eu@example.com "http://usuario:senha@host:porta"
+```
+
+- `codex-add` se recusa a rodar sem `--proxy` (passe `--allow-direct` para aceitar o seu IP real).
+  Por padrão não abre navegador: o navegador padrão chegaria na OpenAI pelo seu IP real. O
+  callback do OAuth usa a porta `1455`, o único redirect registrado no cliente público do Codex
+  CLI, então feche qualquer `codex login` em andamento antes.
+- `codex-switch` não faz chamada de rede. Antes de sobrescrever o `auth.json`, ele salva a rotação
+  de token que o Codex CLI fez na conta que está saindo; sem isso, voltar a ela usaria um refresh
+  token que o emissor já aposentou. Feche as sessões do Codex antes de trocar.
+- `codex-refresh` passa pelo proxy da própria conta e falha fechado se ela não tiver proxy ou se
+  ele estiver inutilizável. Um `invalid_grant` marca a conta como `error`: entre de novo com `codex-add`.
+- Um e-mail compartilhado por um login pessoal e um de workspace é ambíguo: passe o id da conta.
+- As constantes do protocolo (emissor, client id público, escopos, formato do `auth.json`) vêm do
+  repositório Apache-2.0 [openai/codex](https://github.com/openai/codex). Usar várias contas está
+  sujeito aos termos da OpenAI; cumpri-los é responsabilidade sua.
+
+---
+
+
 ## Fallback Multi-Modelo & Auto-Recuperação
 
 O switcher conta com um sistema inteligente de contingência multi-modelo para evitar interrupções no fluxo de desenvolvimento:

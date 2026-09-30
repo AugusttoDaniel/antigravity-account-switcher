@@ -260,6 +260,41 @@ confirmation click) for accounts whose proxy differs or is missing there.
 
 ---
 
+### OpenAI Codex accounts
+
+The same isolation applies to ChatGPT/Codex logins. Codex accounts live in their own table and
+never enter the Antigravity routing pool, quota poller or OmniRoute export.
+
+```bash
+# Sign in through a dedicated proxy, inside an isolated AliasMode/ADS Power profile (recommended)
+antigravity-account-switcher codex-add --adspower --proxy "http://user:pass@host:port"
+# or print the sign-in URL and open it yourself in a browser that already uses that proxy
+antigravity-account-switcher codex-add --proxy "http://user:pass@host:port"
+
+antigravity-account-switcher codex-import          # adopt the Codex CLI's current ~/.codex/auth.json
+antigravity-account-switcher codex-list
+antigravity-account-switcher codex-switch me@example.com   # writes ~/.codex/auth.json (honors $CODEX_HOME)
+antigravity-account-switcher codex-refresh --all           # renews tokens through each account's proxy
+antigravity-account-switcher codex-set-proxy me@example.com "http://user:pass@host:port"
+```
+
+- `codex-add` refuses to run without `--proxy` (pass `--allow-direct` to accept your real IP).
+  By default it opens no browser: the default browser would reach OpenAI from your real IP.
+  The OAuth callback uses port `1455`, the only redirect the Codex CLI's public client has
+  registered, so close any running `codex login` first.
+- `codex-switch` makes no network call. Before overwriting `auth.json` it saves any token
+  rotation the Codex CLI made to the outgoing account; without that, switching back would use a
+  refresh token the issuer already retired. Close running Codex sessions before switching.
+- `codex-refresh` goes through the account's own proxy and fails closed if it has none or the
+  proxy is unusable. An `invalid_grant` marks the account `error`: sign in again with `codex-add`.
+- An email shared by a personal and a workspace login is ambiguous: pass the account id.
+- Protocol constants (issuer, public client id, scopes, `auth.json` layout) come from the
+  Apache-2.0 [openai/codex](https://github.com/openai/codex) repository. Using several accounts
+  is subject to OpenAI's terms; you are responsible for complying with them.
+
+---
+
+
 ## Multi-Tier Model Fallback & Self-Healing
 
 The switcher includes an intelligent multi-tier contingency system to keep you coding uninterrupted:
