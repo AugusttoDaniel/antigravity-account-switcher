@@ -89,10 +89,48 @@
     return '<span class="badge ' + cls + '">' + esc(label) + '</span>';
   }
 
-  function formatTime(iso) {
-    const d = new Date(iso);
-    if (isNaN(d.getTime()) || d.getFullYear() < 2000) return '-';
-    return d.toLocaleString();
+  function untilReset(iso) {
+    const ms = new Date(iso).getTime() - Date.now();
+    if (isNaN(ms)) return '';
+    if (ms <= 0) return 'reset due';
+    const m = Math.floor(ms / 60000);
+    if (m < 60) return 'resets in ' + m + 'm';
+    const h = Math.floor(m / 60);
+    if (h < 48) return 'resets in ' + h + 'h' + String(m % 60).padStart(2, '0') + 'm';
+    return 'resets in ' + Math.floor(h / 24) + 'd' + (h % 24) + 'h';
+  }
+
+  function ago(iso) {
+    const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+    if (isNaN(s) || s < 0) return '';
+    if (s < 90) return 'just now';
+    if (s < 3600) return Math.floor(s / 60) + ' min ago';
+    if (s < 172800) return Math.floor(s / 3600) + ' h ago';
+    return Math.floor(s / 86400) + ' d ago';
+  }
+
+  function meter(label, w) {
+    if (!w) return '';
+    const pct = Math.max(0, Math.min(100, Number(w.used_percent) || 0));
+    const level = pct >= 90 ? ' is-danger' : pct >= 70 ? ' is-warn' : '';
+    return '<div class="codex-meter' + level + '">' +
+      '<span class="codex-meter-label">' + esc(label) + '</span>' +
+      '<span class="codex-meter-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + pct + '" aria-label="' + esc(label) + ' used">' +
+      '<span class="codex-meter-fill" style="width:' + pct + '%"></span></span>' +
+      '<span class="codex-meter-text">' + pct + '% used' + (w.reset_at ? ' · ' + esc(untilReset(w.reset_at)) : '') + '</span></div>';
+  }
+
+  function limitsCell(a) {
+    const u = a.usage;
+    if (!u) return '<span class="codex-limits-note">not read yet</span>';
+    const parts = [];
+    if (u.limit_reached) parts.push('<span class="badge badge-warning">limit reached</span>');
+    parts.push(meter('5h', u.primary) + meter('Week', u.secondary));
+    let note = 'read ' + ago(u.fetched_at);
+    if (u.unlimited_credits) note += ' · credits: unlimited';
+    else if (u.has_credits && u.credit_balance) note += ' · credits: ' + u.credit_balance;
+    parts.push('<div class="codex-limits-note">' + esc(note) + '</div>');
+    return parts.join('');
   }
 
   function render() {
@@ -107,11 +145,12 @@
         '<td>' + esc(a.email) + active + '</td>' +
         '<td>' + esc(a.plan_type || '-') + '</td>' +
         '<td>' + statusBadge(a) + '</td>' +
+        '<td class="codex-limits">' + limitsCell(a) + '</td>' +
         '<td class="proxy-cell">' + proxy + '</td>' +
-        '<td class="num">' + esc(formatTime(a.last_refresh)) + '</td>' +
         '<td class="codex-actions">' +
         '<button type="button" class="btn btn-xs btn-primary" data-act="switch"' + (a.is_active ? ' disabled' : '') + '>Use</button> ' +
-        '<button type="button" class="btn btn-xs btn-secondary" data-act="refresh">Refresh</button> ' +
+        '<button type="button" class="btn btn-xs btn-secondary" data-act="usage" title="Read this account\'s limits through its proxy">Usage</button> ' +
+        '<button type="button" class="btn btn-xs btn-secondary" data-act="refresh" title="Renew this account\'s tokens">Tokens</button> ' +
         '<button type="button" class="btn btn-xs btn-secondary" data-act="proxy">Proxy</button> ' +
         '<button type="button" class="btn btn-xs btn-danger-subtle" data-act="remove">Remove</button>' +
         '</td></tr>';
@@ -162,6 +201,8 @@
         toast('Codex CLI now uses ' + label + '. Restart running Codex sessions.', 'success');
       } else if (name === 'refresh') {
         toast(label + ': tokens renewed through its proxy', 'success');
+      } else if (name === 'usage') {
+        toast(label + ': limits updated', 'success');
       } else {
         toast(label + ' removed', 'success');
       }
@@ -170,6 +211,31 @@
     }
     await load();
   }
+
+  // Reads every account's limits in turn, each through its own proxy; one failing does not stop
+  // the others.
+  const usageAllBtn = document.getElementById('codex-usage-all');
+  usageAllBtn.addEventListener('click', async () => {
+    usageAllBtn.disabled = true;
+    const original = usageAllBtn.textContent;
+    usageAllBtn.textContent = 'Reading…';
+    try {
+      const res = await post('/api/codex/usage/refresh', {});
+      if (!res.ok) {
+        toast('Usage: ' + (await errorMessage(res)), 'error');
+      } else {
+        const results = (await res.json()).results || [];
+        const failed = results.filter((r) => !r.ok);
+        toast((results.length - failed.length) + ' of ' + results.length + ' accounts updated', failed.length ? 'info' : 'success');
+        failed.slice(0, 3).forEach((r) => toast(r.email + ': ' + r.error, 'error'));
+      }
+    } catch (err) {
+      toast('Usage: ' + err.message, 'error');
+    }
+    usageAllBtn.textContent = original;
+    usageAllBtn.disabled = false;
+    await load();
+  });
 
   body.addEventListener('click', (e) => {
     const btn = e.target.closest('button[data-act]');

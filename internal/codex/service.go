@@ -21,6 +21,8 @@ type Service struct {
 	Repo domain.CodexAccountRepository
 	// Home is the Codex config directory holding auth.json (see Home()).
 	Home string
+	// Usages stores the usage snapshots; nil keeps them in memory only (not stored).
+	Usages domain.CodexUsageRepository
 	// NewClient builds the OAuth client for an egress proxy. Tests replace it.
 	NewClient func(proxyURL string) (*Client, error)
 	Now       func() time.Time
@@ -28,7 +30,11 @@ type Service struct {
 
 // NewService wires a Service with proxy-aware production clients.
 func NewService(repo domain.CodexAccountRepository, home string) *Service {
-	return &Service{Repo: repo, Home: home, NewClient: ProxiedClient, Now: time.Now}
+	s := &Service{Repo: repo, Home: home, NewClient: ProxiedClient, Now: time.Now}
+	if u, ok := repo.(domain.CodexUsageRepository); ok {
+		s.Usages = u
+	}
+	return s
 }
 
 // ProxiedClient returns an OAuth client whose traffic goes through proxyURL. An empty URL is a

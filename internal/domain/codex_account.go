@@ -55,3 +55,35 @@ type CodexAccountRepository interface {
 	UpdateAdsPowerProfileID(ctx context.Context, id, profileID string) error
 	Delete(ctx context.Context, id string) error
 }
+
+// CodexUsageWindow is one rate-limit window of a Codex account.
+type CodexUsageWindow struct {
+	UsedPercent   int       `json:"used_percent"`
+	WindowSeconds int       `json:"window_seconds"`
+	ResetAt       time.Time `json:"reset_at"`
+}
+
+// CodexUsage is the last usage snapshot read for an account. Primary is the short window (about
+// five hours) and Secondary the weekly one; either may be absent for some plans.
+type CodexUsage struct {
+	AccountID      string            `json:"account_id"`
+	PlanType       string            `json:"plan_type,omitempty"`
+	Allowed        bool              `json:"allowed"`
+	LimitReached   bool              `json:"limit_reached"`
+	Primary        *CodexUsageWindow `json:"primary,omitempty"`
+	Secondary      *CodexUsageWindow `json:"secondary,omitempty"`
+	HasCredits     bool              `json:"has_credits"`
+	UnlimitedCreds bool              `json:"unlimited_credits"`
+	CreditBalance  string            `json:"credit_balance,omitempty"`
+	FetchedAt      time.Time         `json:"fetched_at"`
+}
+
+// CodexUsageRepository persists the last usage snapshot per Codex account.
+type CodexUsageRepository interface {
+	// SaveUsage replaces the account's snapshot.
+	SaveUsage(ctx context.Context, u *CodexUsage) error
+	// GetUsage returns the snapshot, or ErrCodexAccountNotFound when none was stored.
+	GetUsage(ctx context.Context, accountID string) (*CodexUsage, error)
+	// ListUsage returns every stored snapshot keyed by account id.
+	ListUsage(ctx context.Context) (map[string]*CodexUsage, error)
+}

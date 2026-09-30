@@ -18,8 +18,9 @@ import (
 
 // Protocol constants, taken from github.com/openai/codex (Apache-2.0), codex-rs/login.
 const (
-	DefaultIssuer   = "https://auth.openai.com"
-	DefaultClientID = "app_EMoamEEZ73f0CkXaXp7hrann" // the Codex CLI's public OAuth client
+	DefaultIssuer     = "https://auth.openai.com"
+	DefaultClientID   = "app_EMoamEEZ73f0CkXaXp7hrann" // the Codex CLI's public OAuth client
+	DefaultBackendURL = "https://chatgpt.com/backend-api"
 	// CallbackPort is fixed: the public client only has this loopback redirect registered.
 	CallbackPort = 1455
 	Scope        = "openid profile email offline_access api.connectors.read api.connectors.invoke"
@@ -66,6 +67,8 @@ type Client struct {
 	Issuer   string
 	ClientID string
 	HTTP     *http.Client
+	// BackendURL is the ChatGPT backend the usage endpoint lives on (default DefaultBackendURL).
+	BackendURL string
 }
 
 // NewClient returns a Client for the production issuer using httpClient.
