@@ -27,6 +27,12 @@ type CodexAccount struct {
 
 	LastRefresh time.Time `json:"last_refresh"`
 
+	// OmniRouteExportedAt is set once this account's tokens were handed to OmniRoute. A Codex refresh
+	// token is single-use: from then on OmniRoute renews it, so any other holder (this switcher, the
+	// Codex CLI) that renews too would invalidate the other's copy. Zero when never exported, or after
+	// a fresh sign-in (a new token family).
+	OmniRouteExportedAt time.Time `json:"omniroute_exported_at,omitzero"`
+
 	// ProxyURL is the egress the login and every refresh for this account must use.
 	ProxyURL          string        `json:"proxy_url,omitempty"`
 	AdsPowerProfileID string        `json:"adspower_profile_id,omitempty"`
@@ -53,6 +59,8 @@ type CodexAccountRepository interface {
 	UpdateStatus(ctx context.Context, id string, status AccountStatus) error
 	UpdateProxyURL(ctx context.Context, id, proxyURL string) error
 	UpdateAdsPowerProfileID(ctx context.Context, id, profileID string) error
+	// SetOmniRouteExported records (or, with a zero time, clears) the hand-off of the account's tokens.
+	SetOmniRouteExported(ctx context.Context, id string, at time.Time) error
 	Delete(ctx context.Context, id string) error
 }
 

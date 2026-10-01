@@ -489,3 +489,32 @@ func TestCodexUsage_RefreshAllReportsEachAccount(t *testing.T) {
 		t.Fatalf("list = %s", body)
 	}
 }
+
+func TestCodex_HandedOffAccountIsProtected(t *testing.T) {
+	e := newCodexEnv(t, "x@example.com")
+	a := e.seed(t, "a@example.com", "acct-a", codexTestProxy)
+	if err := e.repo.SetOmniRouteExported(context.Background(), a.ID, time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, path := range []string{"/api/codex/accounts/switch", "/api/codex/accounts/refresh", "/api/codex/accounts/usage"} {
+		code, raw := e.call(t, http.MethodPost, path, map[string]string{"id": a.ID})
+		if code != http.StatusConflict || !strings.Contains(raw, "OmniRoute") {
+			t.Errorf("%s = %d %s, want 409 mentioning OmniRoute", path, code, raw)
+		}
+	}
+	if f, _ := codex.ReadAuthFile(codex.AuthPath(e.home)); f != nil {
+		t.Fatal("a refused switch wrote auth.json")
+	}
+
+	// The list tells the page, so it can show the badge and disable the buttons.
+	_, body := e.call(t, http.MethodGet, "/api/codex/accounts", nil)
+	if !strings.Contains(body, `"omniroute_exported_at"`) {
+		t.Fatalf("the list does not expose the hand-off: %s", body)
+	}
+	for _, secret := range []string{"rt-acct-a", "at-acct-a"} {
+		if strings.Contains(body, secret) {
+			t.Fatalf("the list leaks %q", secret)
+		}
+	}
+}

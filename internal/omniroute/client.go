@@ -136,6 +136,40 @@ func BuildAgyTokenJSON(accessToken, refreshToken string, expiry time.Time) map[s
 	return tok
 }
 
+// CodexEntry is one Codex account to import: an auth.json document plus a display name and email.
+type CodexEntry = AgyEntry
+
+// BuildCodexAuthJSON assembles the auth.json document OmniRoute's Codex import expects.
+func BuildCodexAuthJSON(idToken, accessToken, refreshToken, accountID string) map[string]any {
+	tokens := map[string]any{
+		"id_token":      idToken,
+		"access_token":  accessToken,
+		"refresh_token": refreshToken,
+	}
+	if accountID != "" {
+		tokens["account_id"] = accountID
+	}
+	return map[string]any{"auth_mode": "chatgpt", "tokens": tokens}
+}
+
+// ImportBulkCodex imports up to MaxBulkEntries Codex (ChatGPT) accounts in one call (POST
+// /api/providers/codex-auth/import-bulk). OmniRoute refuses an account it already has (409, reported
+// per entry) unless overwriteExisting is set.
+func (c *Client) ImportBulkCodex(ctx context.Context, entries []CodexEntry, overwriteExisting bool) (*ImportResult, error) {
+	if len(entries) == 0 {
+		return &ImportResult{}, nil
+	}
+	if len(entries) > MaxBulkEntries {
+		return nil, fmt.Errorf("omniroute: %d entries exceeds the per-request cap of %d", len(entries), MaxBulkEntries)
+	}
+	body := map[string]any{"entries": entries, "overwriteExisting": overwriteExisting}
+	var out ImportResult
+	if err := c.do(ctx, http.MethodPost, "/api/providers/codex-auth/import-bulk", body, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // ImportBulkAgy imports up to MaxBulkEntries agy accounts in one call.
 func (c *Client) ImportBulkAgy(ctx context.Context, entries []AgyEntry, overwriteExisting bool) (*ImportResult, error) {
 	if len(entries) == 0 {

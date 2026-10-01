@@ -146,6 +146,13 @@ CREATE TABLE IF NOT EXISTS codex_usage (
 );
 `,
 	},
+	{
+		Version:     6,
+		Description: "add_codex_omniroute_exported_at",
+		SQL: `
+ALTER TABLE codex_accounts ADD COLUMN omniroute_exported_at TEXT NOT NULL DEFAULT '';
+`,
+	},
 }
 
 // Migrate applies all pending schema migrations to the database.

@@ -159,6 +159,10 @@ func (a *APIHandler) codexSwitch(w http.ResponseWriter, r *http.Request) {
 	}
 	switched, err := a.codexSvc.Switch(r.Context(), acc.ID)
 	if err != nil {
+		if errors.Is(err, codex.ErrHandedOff) {
+			writeErrorJSON(w, http.StatusConflict, "this account belongs to OmniRoute now", err)
+			return
+		}
 		writeErrorJSON(w, http.StatusInternalServerError, "could not switch the Codex account", err)
 		return
 	}
@@ -175,6 +179,8 @@ func (a *APIHandler) codexRefresh(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	refreshed, err := a.codexSvc.Refresh(ctx, acc.ID, codex.RefreshOptions{})
 	switch {
+	case errors.Is(err, codex.ErrHandedOff):
+		writeErrorJSON(w, http.StatusConflict, "this account belongs to OmniRoute now", err)
 	case errors.Is(err, codex.ErrProxyRequired):
 		writeErrorJSON(w, http.StatusConflict, "this account has no proxy", err)
 	case errors.Is(err, codex.ErrInvalidGrant):
@@ -434,6 +440,8 @@ func (a *APIHandler) codexUsage(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	u, err := a.codexSvc.Usage(ctx, acc.ID, codex.RefreshOptions{})
 	switch {
+	case errors.Is(err, codex.ErrHandedOff):
+		writeErrorJSON(w, http.StatusConflict, "this account belongs to OmniRoute now", err)
 	case errors.Is(err, codex.ErrProxyRequired):
 		writeErrorJSON(w, http.StatusConflict, "this account has no proxy", err)
 	case errors.Is(err, codex.ErrInvalidGrant):

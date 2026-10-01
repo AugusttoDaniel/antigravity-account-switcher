@@ -229,3 +229,52 @@ func TestCodexRepo_UsageSnapshots(t *testing.T) {
 		t.Fatalf("usage survived the account: %+v", all)
 	}
 }
+
+func TestCodexRepo_OmniRouteHandOffMarker(t *testing.T) {
+	repo, _ := setupCodexRepo(t)
+	ctx := context.Background()
+	a, _ := repo.Upsert(ctx, codexAcc("a@example.com", "1"))
+	if !a.OmniRouteExportedAt.IsZero() {
+		t.Fatalf("a new account is marked as exported: %v", a.OmniRouteExportedAt)
+	}
+
+	at := time.Date(2026, 10, 1, 9, 30, 0, 0, time.UTC)
+	if err := repo.SetOmniRouteExported(ctx, a.ID, at); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := repo.GetByID(ctx, a.ID)
+	if !got.OmniRouteExportedAt.Equal(at) {
+		t.Fatalf("marker = %v, want %v", got.OmniRouteExportedAt, at)
+	}
+
+	// Refreshing tokens in place (what a rotation does) must not drop the marker.
+	if err := repo.UpdateTokens(ctx, a.ID, "i2", "a2", "r2", at); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := repo.GetByID(ctx, a.ID); got.OmniRouteExportedAt.IsZero() {
+		t.Fatal("a token update cleared the hand-off marker")
+	}
+
+	// A fresh sign-in is a new token family that OmniRoute does not hold: the marker goes away.
+	again := codexAcc("a@example.com", "1")
+	again.RefreshToken = "brand-new-family"
+	fresh, err := repo.Upsert(ctx, again)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !fresh.OmniRouteExportedAt.IsZero() || fresh.ID != a.ID {
+		t.Fatalf("after a new sign-in: %+v", fresh)
+	}
+
+	// Explicit clear, and a missing account.
+	_ = repo.SetOmniRouteExported(ctx, a.ID, at)
+	if err := repo.SetOmniRouteExported(ctx, a.ID, time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := repo.GetByID(ctx, a.ID); !got.OmniRouteExportedAt.IsZero() {
+		t.Fatal("a zero time did not clear the marker")
+	}
+	if err := repo.SetOmniRouteExported(ctx, "missing", at); !errors.Is(err, domain.ErrCodexAccountNotFound) {
+		t.Fatalf("missing account = %v", err)
+	}
+}
