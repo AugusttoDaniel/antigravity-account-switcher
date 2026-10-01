@@ -37,6 +37,7 @@ const (
 type profileAPI interface {
 	onboard.Profiles
 	Ping(ctx context.Context) error
+	ListProfiles(ctx context.Context, page, pageSize int) ([]adspower.Profile, error)
 }
 
 func newProfileAPI(baseURL, apiKey string) profileAPI {

@@ -207,6 +207,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.api.HandleCodex(w, r)
 		return
 	}
+	if path == "/api/onboarding/profiles" {
+		s.api.HandleOnboardingProfiles(w, r)
+		return
+	}
 	if path == "/api/onboarding/status" {
 		s.api.HandleOnboardingStatus(w, r)
 		return
