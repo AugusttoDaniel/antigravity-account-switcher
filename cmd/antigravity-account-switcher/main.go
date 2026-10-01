@@ -64,6 +64,8 @@ func main() {
 		runImportAdsPower(args)
 	case "export-omniroute":
 		runExportOmniRoute(args)
+	case "sync-proxies-to-aliasmode":
+		runSyncProxiesToAliasMode(args)
 	case "codex-add":
 		runCodexAdd(args)
 	case "codex-import":
@@ -116,6 +118,7 @@ func printUsage() {
 	fmt.Println("  add-account-adspower  Onboard a Google account through an isolated ADS Power profile + proxy")
 	fmt.Println("  import-adspower    Batch-onboard every ADS Power profile as an account (reuses each profile's proxy)")
 	fmt.Println("  export-omniroute   Export accounts to OmniRoute (files and/or its API), binding each account's proxy")
+	fmt.Println("  sync-proxies-to-aliasmode  Create one AliasMode profile per OmniRoute proxy, already bound to it")
 	fmt.Println("  codex-add          Sign in an OpenAI Codex (ChatGPT) account through its own proxy (--adspower for an isolated profile)")
 	fmt.Println("  codex-import       Import the Codex CLI's current auth.json as an account")
 	fmt.Println("  codex-list         List Codex accounts, plan, status and proxy")

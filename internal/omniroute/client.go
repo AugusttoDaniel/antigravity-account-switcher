@@ -391,6 +391,9 @@ type ResolvedProxy struct {
 		Host     string   `json:"host"`
 		Port     flexPort `json:"port"`
 		Username string   `json:"username"`
+		// Password is the real credential (OmniRoute returns it only here, per connection). Keep it in
+		// memory; never log or print it.
+		Password string `json:"password"`
 	} `json:"proxy"`
 }
 
@@ -461,4 +464,33 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 		}
 	}
 	return nil
+}
+
+// ProxyAssignment binds a registry proxy to a scope (an account-scope one names a connection).
+type ProxyAssignment struct {
+	ProxyID string `json:"proxyId"`
+	Scope   string `json:"scope"`
+	ScopeID string `json:"scopeId"`
+}
+
+// ListProxyAssignments returns every proxy assignment (GET /api/v1/management/proxies/assignments).
+func (c *Client) ListProxyAssignments(ctx context.Context) ([]ProxyAssignment, error) {
+	var all []ProxyAssignment
+	for offset := 0; ; {
+		var resp struct {
+			Items []ProxyAssignment `json:"items"`
+			Page  struct {
+				Total int `json:"total"`
+			} `json:"page"`
+		}
+		path := fmt.Sprintf("/api/v1/management/proxies/assignments?limit=%d&offset=%d", listPageSize, offset)
+		if err := c.do(ctx, http.MethodGet, path, nil, &resp); err != nil {
+			return nil, err
+		}
+		all = append(all, resp.Items...)
+		offset += len(resp.Items)
+		if len(resp.Items) == 0 || offset >= resp.Page.Total {
+			return all, nil
+		}
+	}
 }

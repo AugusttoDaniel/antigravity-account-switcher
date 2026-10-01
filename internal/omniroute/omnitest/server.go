@@ -209,6 +209,14 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 
 	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/management/proxies/assignments":
 		id := r.URL.Query().Get("resolve_connection_id")
+		if id == "" { // the plain listing: which proxy is bound to which connection
+			items := []map[string]any{}
+			for connID, proxyID := range s.assigned {
+				items = append(items, map[string]any{"proxyId": proxyID, "scope": "account", "scopeId": connID})
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"items": items, "page": map[string]any{"total": len(items)}})
+			return
+		}
 		for _, p := range s.proxies {
 			if p.ID == s.assigned[id] {
 				_ = json.NewEncoder(w).Encode(map[string]any{
