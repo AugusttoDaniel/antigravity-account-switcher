@@ -247,3 +247,35 @@ func scrub(err error, proxyURL string) error {
 	}
 	return fmt.Errorf("%s", msg)
 }
+
+// EndpointFromProfileName parses a profile name made by ProfileName ("proxy-<host>-<port>") back
+// into "host:port": the Local API does not report a profile's proxy, so the name is how it is known.
+func EndpointFromProfileName(name string) (string, bool) {
+	rest, ok := strings.CutPrefix(strings.TrimSpace(name), "proxy-")
+	if !ok {
+		return "", false
+	}
+	i := strings.LastIndex(rest, "-")
+	if i <= 0 || i == len(rest)-1 {
+		return "", false
+	}
+	host, port := rest[:i], rest[i+1:]
+	if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
+		return "", false
+	}
+	return net.JoinHostPort(host, port), true
+}
+
+// PoolProxyByEndpoint finds the pool proxy URL (with its credentials) for a host:port.
+func PoolProxyByEndpoint(pool []string, endpoint string) (string, bool) {
+	for _, raw := range pool {
+		u, err := egress.ParseProxyURL(strings.TrimSpace(raw))
+		if err != nil || u.Port() == "" {
+			continue
+		}
+		if strings.EqualFold(net.JoinHostPort(u.Hostname(), u.Port()), endpoint) {
+			return raw, true
+		}
+	}
+	return "", false
+}

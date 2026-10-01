@@ -544,3 +544,21 @@ Mantido e atualizado por **[AugusttoDaniel](https://github.com/AugusttoDaniel)**
 ## Licença
 
 Distribuído sob a licença MIT © 2026 Muriel Gasparini e © 2026 Daniel Augusto Silva. Veja [LICENSE](LICENSE) para mais detalhes.
+
+#### Entrando pelo próprio OmniRoute (`omniroute-login`)
+
+Um token importado com `export-omniroute` sempre cai no provider `agy`, e o OmniRoute não tem importação em
+lote para o `antigravity`. Para ter a conta **em `antigravity`, com tokens emitidos para o cliente do próprio
+OmniRoute** (que consegue renová-los), faça o login pelo fluxo OAuth do OmniRoute, a partir de um perfil
+de navegador isolado:
+
+```bash
+antigravity-account-switcher omniroute-login --url https://seu-omniroute --profile <id-do-perfil>
+```
+
+O comando pede ao OmniRoute a URL de login, abre no navegador do perfil (atrás do proxy dele, obtido pelo
+nome `proxy-<host>-<porta>` e pelo Proxy Pool, ou `--proxy`) e espera o redirect (`localhost:8080/callback`,
+capturado por um listener local, ou cole o endereço em que o navegador parar). O OmniRoute troca o código
+e guarda a conexão; os tokens não passam pelo switcher. No fim, o proxy é ligado à conexão nova. Nada é
+criado se não der para consultar quais contas o OmniRoute já tem. A troca do código acontece no servidor do
+OmniRoute, então o Google vê o IP dele nessa chamada; as seguintes usam o proxy ligado à conexão.

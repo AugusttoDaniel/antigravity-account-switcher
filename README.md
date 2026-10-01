@@ -545,3 +545,22 @@ Maintained and updated by **[AugusttoDaniel](https://github.com/AugusttoDaniel)*
 ## License
 
 MIT License © 2026 Muriel Gasparini and © 2026 Daniel Augusto Silva. See [LICENSE](LICENSE) for details.
+
+#### Signing in through OmniRoute itself (`omniroute-login`)
+
+A token imported with `export-omniroute` always lands under the `agy` provider, and OmniRoute has no bulk
+import for `antigravity`. To get an account **under `antigravity`, with tokens issued to OmniRoute's own
+client** (so it can renew them), sign it in through OmniRoute's own OAuth flow from an isolated browser
+profile:
+
+```bash
+antigravity-account-switcher omniroute-login --url https://your-omniroute --profile <profile-id>
+```
+
+The command asks OmniRoute for its sign-in URL, opens it in that profile's browser (behind the profile's
+proxy, taken from the profile name `proxy-<host>-<port>` and the Proxy Pool, or `--proxy`), and waits for
+the redirect (`localhost:8080/callback`, caught by a loopback listener, or paste the address the browser
+lands on). OmniRoute then exchanges the code and stores the connection itself; the tokens never pass through
+the switcher. Finally the proxy is bound to the new connection. Nothing is created if OmniRoute cannot be
+reached to check which accounts it already has. The code exchange happens on OmniRoute's server, so Google
+sees its IP for that one call; later calls use the proxy bound to the connection.
