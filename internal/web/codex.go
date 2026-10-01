@@ -27,9 +27,11 @@ func WithCodexService(svc *codex.Service) Option {
 type CodexAccountView struct {
 	*domain.CodexAccount
 	// Usage is the last stored snapshot of the account's limits (nil until one is read).
-	Usage        *domain.CodexUsage `json:"usage,omitempty"`
-	ProxyURL     string             `json:"proxy_url,omitempty"`
-	ProxyInvalid bool               `json:"proxy_invalid,omitempty"`
+	Usage *domain.CodexUsage `json:"usage,omitempty"`
+	// Warmup is the account's warm-up schedule and its last result (nil until one is set).
+	Warmup       *domain.CodexWarmup `json:"warmup,omitempty"`
+	ProxyURL     string              `json:"proxy_url,omitempty"`
+	ProxyInvalid bool                `json:"proxy_invalid,omitempty"`
 }
 
 func newCodexAccountView(a *domain.CodexAccount) *CodexAccountView {
@@ -98,6 +100,10 @@ func (a *APIHandler) HandleCodex(w http.ResponseWriter, r *http.Request) {
 		a.codexUsage(w, r)
 	case "usage/refresh":
 		a.codexUsageRefreshAll(w, r)
+	case "accounts/warmup":
+		a.codexWarmupNow(w, r)
+	case "accounts/warmup/schedule":
+		a.codexWarmupSchedule(w, r)
 	case "login/start":
 		a.codexLoginStart(w, r)
 	case "login/complete":
@@ -126,10 +132,15 @@ func (a *APIHandler) codexList(w http.ResponseWriter, r *http.Request) {
 	if a.codexSvc.Usages != nil {
 		usages, _ = a.codexSvc.Usages.ListUsage(r.Context())
 	}
+	var warmups map[string]*domain.CodexWarmup
+	if a.codexSvc.Warmups != nil {
+		warmups, _ = a.codexSvc.Warmups.ListWarmups(r.Context())
+	}
 	views := make([]*CodexAccountView, 0, len(accs))
 	for _, acc := range accs {
 		v := newCodexAccountView(acc)
 		v.Usage = usages[acc.ID]
+		v.Warmup = warmups[acc.ID]
 		views = append(views, v)
 	}
 	writeJSON(w, http.StatusOK, views)
@@ -481,4 +492,70 @@ func (a *APIHandler) codexUsageRefreshAll(w http.ResponseWriter, r *http.Request
 		results = append(results, res)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"results": results})
+}
+
+// codexWarmupNow sends the account one minimal request through its own proxy, to start its
+// rate-limit window. It spends a little quota, so it is a POST the user asks for.
+func (a *APIHandler) codexWarmupNow(w http.ResponseWriter, r *http.Request) {
+	acc, ok := a.codexAccountFromRequest(w, r)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 120*time.Second)
+	defer cancel()
+	res, err := a.codexSvc.WarmUp(ctx, acc.ID, codex.WarmOptions{})
+	switch {
+	case errors.Is(err, codex.ErrHandedOff):
+		writeErrorJSON(w, http.StatusConflict, "this account belongs to OmniRoute now", err)
+	case errors.Is(err, codex.ErrProxyRequired):
+		writeErrorJSON(w, http.StatusConflict, "this account has no proxy", err)
+	case errors.Is(err, codex.ErrNeedsSignIn), errors.Is(err, codex.ErrInvalidGrant):
+		writeErrorJSON(w, http.StatusUnauthorized, "the account must sign in again", err)
+	case err != nil:
+		writeErrorJSON(w, http.StatusBadGateway, "the warm-up failed", err)
+	default:
+		writeJSON(w, http.StatusOK, map[string]any{"status": "warmed", "model": res.Model})
+	}
+}
+
+type codexScheduleRequest struct {
+	ID string `json:"id"`
+	// Times is a list of local times of day ("07:00, 12:30"). Required to enable.
+	Times   string `json:"times"`
+	Enabled bool   `json:"enabled"`
+}
+
+// codexWarmupSchedule turns an account's scheduled warm-up on or off and sets its times.
+func (a *APIHandler) codexWarmupSchedule(w http.ResponseWriter, r *http.Request) {
+	var req codexScheduleRequest
+	if !decodeBody(w, r, &req) {
+		return
+	}
+	acc, err := a.codexSvc.Resolve(r.Context(), req.ID)
+	if err != nil {
+		writeErrorJSON(w, http.StatusNotFound, "account not found", err)
+		return
+	}
+	var times []string
+	if strings.TrimSpace(req.Times) != "" {
+		if times, err = codex.ParseTimes(req.Times); err != nil {
+			writeErrorJSON(w, http.StatusBadRequest, "invalid times", err)
+			return
+		}
+	} else if !req.Enabled {
+		// Turning it off without new times keeps the ones already saved.
+		if cur, gerr := a.codexSvc.Warmups.GetWarmup(r.Context(), acc.ID); gerr == nil {
+			times = cur.Times
+		}
+	}
+	if req.Enabled && len(times) == 0 {
+		writeErrorJSON(w, http.StatusBadRequest, "give at least one time to enable the warm-up", nil)
+		return
+	}
+	sched, err := a.codexSvc.SetWarmupSchedule(r.Context(), acc.ID, times, req.Enabled)
+	if err != nil {
+		writeErrorJSON(w, http.StatusInternalServerError, "could not save the schedule", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "saved", "warmup": sched})
 }

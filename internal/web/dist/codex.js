@@ -31,6 +31,10 @@
     url: document.getElementById('codex-dialog-url'),
     copy: document.getElementById('codex-dialog-copy'),
     status: document.getElementById('codex-dialog-status'),
+    proxyFields: document.getElementById('codex-dialog-proxy-fields'),
+    warmup: document.getElementById('codex-dialog-warmup'),
+    times: document.getElementById('codex-dialog-times'),
+    warmupOn: document.getElementById('codex-dialog-warmup-on'),
     paste: document.getElementById('codex-dialog-paste'),
     pasteInput: document.getElementById('codex-dialog-paste-input'),
     pasteBtn: document.getElementById('codex-dialog-paste-btn'),
@@ -120,9 +124,22 @@
       '<span class="codex-meter-text">' + pct + '% used' + (w.reset_at ? ' · ' + esc(untilReset(w.reset_at)) : '') + '</span></div>';
   }
 
+  // The scheduled warm-up: its times, and how the last attempt went.
+  function warmupNote(a) {
+    const w = a.warmup;
+    if (!w || (!w.enabled && !w.last_run_at)) return '';
+    let text = w.enabled ? 'warm-up ' + (w.times || []).join(', ') : 'warm-up off';
+    if (w.last_run_at) {
+      text += ' · last ' + (w.last_status || '?') + ' ' + ago(w.last_run_at);
+      if (w.last_status === 'failed' && w.last_detail) text += ' (' + w.last_detail + ')';
+    }
+    const bad = w.last_status === 'failed';
+    return '<div class="codex-limits-note' + (bad ? ' is-warn' : '') + '" title="' + esc(w.last_detail || '') + '">' + esc(text) + '</div>';
+  }
+
   function limitsCell(a) {
     const u = a.usage;
-    if (!u) return '<span class="codex-limits-note">not read yet</span>';
+    if (!u) return '<span class="codex-limits-note">not read yet</span>' + warmupNote(a);
     const parts = [];
     if (u.limit_reached) parts.push('<span class="badge badge-warning">limit reached</span>');
     parts.push(meter('5h', u.primary) + meter('Week', u.secondary));
@@ -130,6 +147,7 @@
     if (u.unlimited_credits) note += ' · credits: unlimited';
     else if (u.has_credits && u.credit_balance) note += ' · credits: ' + u.credit_balance;
     parts.push('<div class="codex-limits-note">' + esc(note) + '</div>');
+    parts.push(warmupNote(a));
     return parts.join('');
   }
 
@@ -155,6 +173,8 @@
         '<button type="button" class="btn btn-xs btn-primary" data-act="switch"' + (a.is_active || a.omniroute_exported_at ? ' disabled' : '') + '>Use</button> ' +
         '<button type="button" class="btn btn-xs btn-secondary" data-act="usage"' + lock + ' title="Read this account\'s limits through its proxy">Usage</button> ' +
         '<button type="button" class="btn btn-xs btn-secondary" data-act="refresh"' + lock + ' title="Renew this account\'s tokens">Tokens</button> ' +
+        '<button type="button" class="btn btn-xs btn-secondary" data-act="warmup"' + lock + ' title="Send one minimal request now to start this account\'s rate-limit window (spends a little quota)">Warm</button> ' +
+        '<button type="button" class="btn btn-xs btn-secondary" data-act="schedule"' + lock + ' title="Warm this account automatically at set times of day">Schedule</button> ' +
         '<button type="button" class="btn btn-xs btn-secondary" data-act="proxy">Proxy</button> ' +
         '<button type="button" class="btn btn-xs btn-danger-subtle" data-act="remove">Remove</button>' +
         '</td></tr>';
@@ -187,6 +207,19 @@
       openDialog('proxy', account);
       return;
     }
+    if (name === 'schedule') {
+      openDialog('warmup', account);
+      return;
+    }
+    if (name === 'warmup') {
+      // Two-step confirm: it spends quota and sends a request from the account's proxy IP.
+      if (btn.dataset.armed !== '1') {
+        btn.dataset.armed = '1';
+        btn.textContent = 'Confirm?';
+        setTimeout(() => { if (btn.isConnected) { btn.dataset.armed = ''; btn.textContent = 'Warm'; } }, 4000);
+        return;
+      }
+    }
     if (name === 'remove') {
       // Two-step confirm: removing forgets the tokens (the Codex CLI's own auth.json is untouched).
       if (btn.dataset.armed !== '1') {
@@ -207,6 +240,8 @@
         toast(label + ': tokens renewed through its proxy', 'success');
       } else if (name === 'usage') {
         toast(label + ': limits updated', 'success');
+      } else if (name === 'warmup') {
+        toast(label + ': warmed, its window has started', 'success');
       } else {
         toast(label + ' removed', 'success');
       }
@@ -255,6 +290,11 @@
   }
 
   function updateStart() {
+    // The warm-up dialog has no proxy to pick: turning it off needs no times at all.
+    if (dlg.kind === 'warmup') {
+      dlg.start.disabled = dlg.busy || (dlg.warmupOn.checked && dlg.times.value.trim() === '');
+      return;
+    }
     dlg.start.disabled = dlg.busy || !hasProxy();
   }
 
@@ -327,15 +367,27 @@
     dlg.pasteError.hidden = true;
     setError('');
     const adding = kind === 'add';
-    dlg.title.textContent = adding ? 'Add a Codex account' : 'Change proxy';
+    const warming = kind === 'warmup';
+    dlg.title.textContent = adding ? 'Add a Codex account' : warming ? 'Scheduled warm-up' : 'Change proxy';
     dlg.account.hidden = adding;
     dlg.account.textContent = account ? account.email : '';
     dlg.modes.hidden = !adding;
-    dlg.start.textContent = adding ? 'Start sign-in' : 'Save proxy';
+    dlg.proxyFields.hidden = warming;
+    dlg.warmup.hidden = !warming;
+    dlg.start.textContent = adding ? 'Start sign-in' : warming ? 'Save schedule' : 'Save proxy';
+    if (warming) {
+      const w = (account && account.warmup) || {};
+      dlg.times.value = (w.times || []).join(', ');
+      dlg.warmupOn.checked = !!w.enabled;
+    }
     dlg.modeProfile.disabled = true;
     dlg.modeLink.checked = true;
     updateStart();
     dlg.el.showModal();
+    if (warming) {
+      dlg.times.focus();
+      return;
+    }
     dlg.input.focus();
     fillPool();
     if (adding) checkProfileAPI();
@@ -371,7 +423,32 @@
     }, 3000);
   }
 
+  async function submitWarmup() {
+    if (dlg.busy) return;
+    setError('');
+    dlg.busy = true;
+    updateStart();
+    try {
+      const res = await post('/api/codex/accounts/warmup/schedule', {
+        id: dlg.accountID, times: dlg.times.value.trim(), enabled: dlg.warmupOn.checked,
+      });
+      if (!res.ok) {
+        setError(await errorMessage(res));
+        return;
+      }
+      dlg.el.close();
+      toast(dlg.warmupOn.checked ? 'Warm-up scheduled. It runs while the switcher is running.' : 'Warm-up turned off', 'success');
+      load();
+    } catch (err) {
+      setError('Could not save: ' + err.message);
+    } finally {
+      dlg.busy = false;
+      updateStart();
+    }
+  }
+
   async function submit() {
+    if (dlg.kind === 'warmup') return submitWarmup();
     if (dlg.busy || !hasProxy()) return;
     setError('');
     dlg.busy = true;
@@ -427,6 +504,8 @@
     }
   }
 
+  dlg.times.addEventListener('input', () => { setError(''); updateStart(); });
+  dlg.warmupOn.addEventListener('change', updateStart);
   dlg.input.addEventListener('input', () => {
     setError('');
     if (dlg.input.value.trim() !== '') dlg.poolSelect.value = '';

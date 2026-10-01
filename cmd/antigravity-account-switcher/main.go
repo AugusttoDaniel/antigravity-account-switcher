@@ -78,6 +78,10 @@ func main() {
 		runCodexRefresh(args)
 	case "codex-usage":
 		runCodexUsage(args)
+	case "codex-warmup":
+		runCodexWarmup(args)
+	case "codex-warmup-schedule":
+		runCodexWarmupSchedule(args)
 	case "codex-export-omniroute":
 		runCodexExportOmniRoute(args)
 	case "codex-set-proxy":
@@ -125,6 +129,8 @@ func printUsage() {
 	fmt.Println("  codex-switch       Make a Codex account the one the Codex CLI uses (writes ~/.codex/auth.json)")
 	fmt.Println("  codex-refresh      Renew Codex tokens through each account's proxy")
 	fmt.Println("  codex-usage        Show each Codex account's 5-hour and weekly limits (live through its proxy, or --cached)")
+	fmt.Println("  codex-warmup       Send a Codex account one minimal request now, to start its rate-limit window")
+	fmt.Println("  codex-warmup-schedule  Show or set the times of day a Codex account is warmed automatically (runs inside serve)")
 	fmt.Println("  codex-export-omniroute  Hand Codex accounts to OmniRoute (plan first; --yes to proceed). The tokens then belong to OmniRoute")
 	fmt.Println("  codex-set-proxy    Bind an outbound proxy to a Codex account")
 	fmt.Println("  codex-remove       Remove a Codex account from the switcher")
@@ -289,6 +295,16 @@ func runServe(args []string) {
 	}
 	codexSvc := codex.NewService(sqlite.NewCodexAccountRepository(db), codexHome)
 
+	// Scheduled Codex warm-ups. Nothing runs unless an account has its schedule turned on.
+	codexScheduler := &codex.Scheduler{Svc: codexSvc, OnEvent: func(kind, accountID, message string) {
+		evType := domain.EventTypeCodexWarmup
+		if kind == "failed" {
+			evType = domain.EventTypeError
+		}
+		broadcaster.Broadcast(&domain.ProxyEvent{Type: evType, AccountID: accountID, Message: message, Timestamp: time.Now().UTC()})
+	}}
+	go codexScheduler.Run(ctx)
+
 	metricsService := metrics.NewService(metricsRepo, accRepo)
 
 	server, err := web.NewServer(
@@ -322,6 +338,17 @@ func runServe(args []string) {
 	fmt.Printf("    Web Dashboard: http://%s:%d/\n", *bind, boundPort)
 	fmt.Printf("    Proxy Port:    http://%s:%d/\n", *bind, boundPort)
 	fmt.Printf("    Quota Daemon:  Active (interval: %v)\n", *pollInterval)
+	if ws, err := codexSvc.Warmups.ListWarmups(ctx); err == nil {
+		n := 0
+		for _, w := range ws {
+			if w.Enabled {
+				n++
+			}
+		}
+		if n > 0 {
+			fmt.Printf("    Codex warm-up: %d account(s) scheduled\n", n)
+		}
+	}
 	if cfg.FallbackSecondaryEnabled {
 		fmt.Printf("    Model Fallback: Enabled (%s -> %s)\n", cfg.ModelPrimary, cfg.ModelSecondary)
 	} else {

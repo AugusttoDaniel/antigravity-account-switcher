@@ -342,6 +342,18 @@ antigravity-account-switcher codex-set-proxy eu@example.com "http://usuario:senh
   manual: depois do login, o navegador cai numa página que não carrega; copie o endereço completo e
   cole no dashboard (ou no terminal, no `codex-add`). O endereço carrega um código de uso único, então
   não o compartilhe.
+- **Aquecimento:** a janela de limite de uma conta Codex começa com o primeiro pedido dela.
+  `codex-warmup [conta]` envia um pedido mínimo pelo proxy da própria conta agora, e
+  `codex-warmup-schedule <conta> --times "07:00,12:30"` faz isso sozinho nesses horários locais (`--off`
+  desliga, sem flags mostra). O agendamento roda **dentro do `serve`**, então nada acontece com o switcher
+  parado. Vem desligado em toda conta até você ligar. Gasta um pouco de cota a cada vez, e cada pedido sai
+  pelo IP do proxy da conta, então é conservador de propósito: no máximo 6 vezes por dia, cada horário roda
+  uma vez (sem nova tentativa após falha), as contas rodam uma de cada vez com pausa entre elas, cada horário
+  começa com um deslocamento estável por conta de até 90 segundos, e um horário que o switcher perdeu por
+  mais de 10 minutos é registrado como perdido em vez de disparar atrasado. O modelo não é fixo: é o que a
+  lista de modelos da própria conta põe em primeiro (`--model` troca). Contas sem proxy, entregues ao
+  OmniRoute ou que precisam de novo login são puladas, nunca enviadas. O dashboard tem **Warm** (pede um
+  segundo clique) e **Schedule** por conta, e mostra os horários e o último resultado.
 - As constantes do protocolo (emissor, client id público, escopos, formato do `auth.json`) vêm do
   repositório Apache-2.0 [openai/codex](https://github.com/openai/codex). Usar várias contas está
   sujeito aos termos da OpenAI; cumpri-los é responsabilidade sua.

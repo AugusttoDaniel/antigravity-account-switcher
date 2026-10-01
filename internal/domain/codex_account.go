@@ -95,3 +95,31 @@ type CodexUsageRepository interface {
 	// ListUsage returns every stored snapshot keyed by account id.
 	ListUsage(ctx context.Context) (map[string]*CodexUsage, error)
 }
+
+// CodexWarmup is an account's warm-up schedule: at the given times of day the switcher sends one
+// minimal request through the account's proxy, which starts its rate-limit window then. It is off
+// until the user turns it on for that account.
+type CodexWarmup struct {
+	AccountID string `json:"account_id"`
+	Enabled   bool   `json:"enabled"`
+	// Times are local times of day, "HH:MM", sorted and unique.
+	Times []string `json:"times"`
+	// LastFiredSlot is the "YYYY-MM-DD HH:MM" slot the scheduler last ran, so a slot runs once.
+	LastFiredSlot string `json:"last_fired_slot,omitempty"`
+	// LastRunAt/LastStatus/LastDetail describe the latest attempt (scheduled or manual). LastStatus
+	// is "ok", "failed", "skipped" or "missed". LastDetail never carries tokens or credentials.
+	LastRunAt  time.Time `json:"last_run_at,omitzero"`
+	LastStatus string    `json:"last_status,omitempty"`
+	LastDetail string    `json:"last_detail,omitempty"`
+	LastModel  string    `json:"last_model,omitempty"`
+}
+
+// CodexWarmupRepository persists warm-up schedules.
+type CodexWarmupRepository interface {
+	// SaveWarmup replaces the account's schedule and last-run record.
+	SaveWarmup(ctx context.Context, w *CodexWarmup) error
+	// GetWarmup returns the schedule, or ErrCodexAccountNotFound when none was saved.
+	GetWarmup(ctx context.Context, accountID string) (*CodexWarmup, error)
+	// ListWarmups returns every schedule keyed by account id.
+	ListWarmups(ctx context.Context) (map[string]*CodexWarmup, error)
+}

@@ -1740,3 +1740,6 @@ body.privacy-mode .blurred-email {
 .codex-meter.is-danger .codex-meter-fill { background: var(--color-danger); }
 .codex-meter-text { grid-column: 2; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
 .codex-limits-note { margin-top: 0.3rem; font-size: 0.68rem; color: var(--text-muted); }
+.codex-limits-note.is-warn { color: var(--color-warning); }
+/* A UA [hidden] loses to any author display rule: keep the fieldset hideable (Change proxy / warm-up dialogs). */
+.oauth-mode[hidden] { display: none; }

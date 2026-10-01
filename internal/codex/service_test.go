@@ -143,7 +143,8 @@ func newSvcEnv(t *testing.T) *svcEnv {
 	e.issuer = func(h http.HandlerFunc) { handler = h }
 	e.svc = &Service{
 		Repo: e.repo, Home: e.home,
-		Usages: e.repo,
+		Usages:  e.repo,
+		Warmups: e.repo,
 		NewClient: func(string) (*Client, error) {
 			return &Client{Issuer: srv.URL, ClientID: "cid", HTTP: &http.Client{Transport: localOnly{srv.Client().Transport}}, BackendURL: srv.URL}, nil
 		},

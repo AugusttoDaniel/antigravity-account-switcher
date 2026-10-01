@@ -34,6 +34,8 @@ type Service struct {
 	Home string
 	// Usages stores the usage snapshots; nil keeps them in memory only (not stored).
 	Usages domain.CodexUsageRepository
+	// Warmups stores warm-up schedules and their last result; nil disables recording and scheduling.
+	Warmups domain.CodexWarmupRepository
 	// NewClient builds the OAuth client for an egress proxy. Tests replace it.
 	NewClient func(proxyURL string) (*Client, error)
 	Now       func() time.Time
@@ -44,6 +46,9 @@ func NewService(repo domain.CodexAccountRepository, home string) *Service {
 	s := &Service{Repo: repo, Home: home, NewClient: ProxiedClient, Now: time.Now}
 	if u, ok := repo.(domain.CodexUsageRepository); ok {
 		s.Usages = u
+	}
+	if w, ok := repo.(domain.CodexWarmupRepository); ok {
+		s.Warmups = w
 	}
 	return s
 }

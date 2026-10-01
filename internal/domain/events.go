@@ -27,6 +27,8 @@ const (
 	EventTypeTokensCaptured EventType = "tokens_captured"
 	// EventTypeError denotes a proxy or system operational error.
 	EventTypeError EventType = "error"
+	// EventTypeCodexWarmup denotes a scheduled Codex warm-up attempt (ok, skipped or missed).
+	EventTypeCodexWarmup EventType = "codex_warmup"
 )
 
 // ProxyEvent records an operational event emitted by the proxy or background daemons.

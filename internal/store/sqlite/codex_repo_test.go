@@ -278,3 +278,42 @@ func TestCodexRepo_OmniRouteHandOffMarker(t *testing.T) {
 		t.Fatalf("missing account = %v", err)
 	}
 }
+
+func TestCodexRepo_WarmupSchedules(t *testing.T) {
+	repo, _ := setupCodexRepo(t)
+	ctx := context.Background()
+	a, _ := repo.Upsert(ctx, codexAcc("a@example.com", "1"))
+
+	if _, err := repo.GetWarmup(ctx, a.ID); !errors.Is(err, domain.ErrCodexAccountNotFound) {
+		t.Fatalf("GetWarmup with none = %v", err)
+	}
+	ran := time.Date(2026, 10, 1, 7, 0, 5, 0, time.UTC)
+	w := &domain.CodexWarmup{AccountID: a.ID, Enabled: true, Times: []string{"07:00", "12:30"},
+		LastFiredSlot: "2026-10-01 07:00", LastRunAt: ran, LastStatus: "ok", LastModel: "m1"}
+	if err := repo.SaveWarmup(ctx, w); err != nil {
+		t.Fatal(err)
+	}
+	got, err := repo.GetWarmup(ctx, a.ID)
+	if err != nil || !got.Enabled || len(got.Times) != 2 || got.Times[1] != "12:30" || !got.LastRunAt.Equal(ran) || got.LastFiredSlot != "2026-10-01 07:00" {
+		t.Fatalf("warm-up = %+v, %v", got, err)
+	}
+
+	w.Enabled = false
+	w.LastStatus = "failed"
+	if err := repo.SaveWarmup(ctx, w); err != nil {
+		t.Fatal(err)
+	}
+	all, _ := repo.ListWarmups(ctx)
+	if len(all) != 1 || all[a.ID].Enabled || all[a.ID].LastStatus != "failed" {
+		t.Fatalf("list = %+v", all)
+	}
+	if err := repo.SaveWarmup(ctx, &domain.CodexWarmup{}); err == nil {
+		t.Fatal("a schedule with no account id must be refused")
+	}
+	if err := repo.Delete(ctx, a.ID); err != nil {
+		t.Fatal(err)
+	}
+	if all, _ := repo.ListWarmups(ctx); len(all) != 0 {
+		t.Fatalf("the schedule survived the account: %+v", all)
+	}
+}
