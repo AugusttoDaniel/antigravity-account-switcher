@@ -268,9 +268,29 @@ func (a *APIHandler) codexLoginStart(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &req) {
 		return
 	}
-	proxyURL, ok := a.proxyFromRequest(w, req.PoolID, req.ProxyURL)
-	if !ok {
-		return
+	var proxyURL string
+	if req.Mode == "profile" && strings.TrimSpace(req.ProfileID) != "" {
+		// An existing profile brings its own proxy: the pool's entry for the profile's endpoint.
+		chosen := strings.TrimSpace(req.ProxyURL)
+		if id := strings.TrimSpace(req.PoolID); id != "" {
+			resolved, err := a.resolvePoolProxy(id)
+			if err != nil {
+				writeErrorJSON(w, http.StatusBadRequest, "invalid pool_id", err)
+				return
+			}
+			chosen = resolved
+		}
+		resolved, status, err := a.existingProfileProxyFor(r.Context(), strings.TrimSpace(req.ProfileID), chosen, providerCodex)
+		if err != nil {
+			writeErrorJSON(w, status, "cannot use that profile", err)
+			return
+		}
+		proxyURL = resolved
+	} else {
+		var ok bool
+		if proxyURL, ok = a.proxyFromRequest(w, req.PoolID, req.ProxyURL); !ok {
+			return
+		}
 	}
 	masked, _ := egress.MaskProxyURL(proxyURL)
 	if req.Mode != "" && req.Mode != "link" && req.Mode != "profile" {
