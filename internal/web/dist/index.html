@@ -519,6 +519,12 @@
         </label>
         <button type="button" id="oauth-mode-recheck" class="btn btn-xs btn-secondary">Check again</button>
       </fieldset>
+      <div id="oauth-dialog-profile-wrap" class="proxy-dialog-pool" hidden>
+        <label for="oauth-dialog-profile-select" class="proxy-dialog-label">Browser profile</label>
+        <select id="oauth-dialog-profile-select" class="form-select mono"></select>
+        <p id="oauth-dialog-profile-hint" class="proxy-dialog-hint"></p>
+      </div>
+      <div id="oauth-dialog-proxy-fields">
       <div id="oauth-dialog-pool" class="proxy-dialog-pool" hidden>
         <label for="oauth-dialog-pool-select" class="proxy-dialog-label">Proxy from the pool</label>
         <select id="oauth-dialog-pool-select" class="form-select mono"></select>
@@ -526,6 +532,7 @@
       </div>
       <label for="oauth-dialog-input" class="proxy-dialog-label">Proxy URL</label>
       <input id="oauth-dialog-input" class="proxy-dialog-input mono" type="text" autocomplete="off" spellcheck="false" placeholder="http://user:pass@host:port">
+      </div>
       <label class="pool-check-label proxy-dialog-open" id="oauth-dialog-open-wrap"><input type="checkbox" id="oauth-dialog-open"> Also open the sign-in in this computer's default browser <em>(Google will see your real IP)</em></label>
       <p id="oauth-dialog-error" class="proxy-dialog-error" role="alert" hidden></p>
       <div id="oauth-dialog-link" class="oauth-dialog-link" hidden>

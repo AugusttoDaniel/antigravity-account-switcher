@@ -26,6 +26,7 @@ type fakeProfileAPI struct {
 	stopped   []string
 	createErr error
 	startErr  error
+	profiles  []adspower.Profile // what ListProfiles returns
 }
 
 type fakeProfileView struct {
@@ -45,6 +46,20 @@ func (v *fakeProfileView) Ping(context.Context) error {
 		return errors.New("connection refused")
 	}
 	return nil
+}
+
+func (v *fakeProfileView) ListProfiles(_ context.Context, page, size int) ([]adspower.Profile, error) {
+	v.f.mu.Lock()
+	defer v.f.mu.Unlock()
+	start := (page - 1) * size
+	if start >= len(v.f.profiles) {
+		return nil, nil
+	}
+	end := start + size
+	if end > len(v.f.profiles) {
+		end = len(v.f.profiles)
+	}
+	return append([]adspower.Profile(nil), v.f.profiles[start:end]...), nil
 }
 
 func (v *fakeProfileView) CreateProfile(_ context.Context, req adspower.CreateProfileRequest) (string, error) {
@@ -173,9 +188,12 @@ func TestProfileOnboarding_UsesTheConfiguredEngine(t *testing.T) {
 }
 
 func TestProfileOnboarding_ReusesAnExistingProfile(t *testing.T) {
-	fake := &fakeProfileAPI{reachable: map[string]bool{"http://127.0.0.1:50400": true}}
+	fake := &fakeProfileAPI{reachable: map[string]bool{"http://127.0.0.1:50400": true},
+		profiles: []adspower.Profile{{UserID: "existing-7", Name: "proxy-proxy.example.com-3128"}}}
 	server, engine, repo, _ := profileTestSetup(t, "http://127.0.0.1:50400", "", fake)
-	code, out, raw := startOAuth(t, server, http.MethodPost, map[string]any{"mode": "profile", "proxy_url": proxyWithSecret, "profile_id": "existing-7"})
+	seedPool(t, proxyWithSecret)
+	// No proxy is sent: it comes from the pool, matched to the profile's own endpoint.
+	code, out, raw := startOAuth(t, server, http.MethodPost, map[string]any{"mode": "profile", "profile_id": "existing-7"})
 	if code != http.StatusOK || out["profile_id"] != "existing-7" {
 		t.Fatalf("start: %d %s", code, raw)
 	}

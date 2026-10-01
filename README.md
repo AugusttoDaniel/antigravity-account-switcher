@@ -1,5 +1,9 @@
 # Antigravity Account Switcher
 
+- **In the dashboard:** the **Add account** dialog (AliasMode profile mode) lists these profiles with the
+  account each belongs to, and lets you sign an account in through a free one: the proxy then comes from the
+  profile (matched to the Proxy Pool by the `proxy-<host>-<port>` name), so the sign-in and the token exchange
+  leave from the same IP. One account per profile; nothing is preselected.
 [English](README.md) | [Português (Brasil)](README.pt-BR.md)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)

@@ -634,6 +634,15 @@ func (a *APIHandler) HandleOAuthStart(w http.ResponseWriter, r *http.Request) {
 		}
 		proxyURL = resolved
 	}
+	// An existing profile brings its own proxy: the one in the pool for the profile's endpoint.
+	if req.Mode == "profile" && strings.TrimSpace(req.ProfileID) != "" {
+		resolved, status, err := a.existingProfileProxy(r.Context(), strings.TrimSpace(req.ProfileID), proxyURL)
+		if err != nil {
+			writeErrorJSON(w, status, "cannot use that profile", err)
+			return
+		}
+		proxyURL = resolved
+	}
 	if proxyURL == "" {
 		writeErrorJSON(w, http.StatusBadRequest, "a proxy is required to add an account",
 			errors.New("sign-in and token exchange would otherwise leave from your real IP; pick a proxy from the pool (use the CLI add-account for a direct login)"))

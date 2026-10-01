@@ -343,6 +343,19 @@
   // Accounts Pool & Live Quota Matrix
   // =========================================================================
 
+  // Names of the browser profiles accounts were added through, so a card can say which one it is.
+  // Best effort: without AliasMode running the card falls back to the profile id.
+  const profileNames = new Map();
+  async function loadProfileNames() {
+    try {
+      const res = await fetch('/api/onboarding/profiles');
+      if (!res.ok) return;
+      profileNames.clear();
+      ((await res.json()).profiles || []).forEach((p) => profileNames.set(p.id, p.name));
+      if (rawAccountsData.length) renderAccountsGrid();
+    } catch (_) { /* no profile API: ids are shown instead */ }
+  }
+
   async function fetchAccounts() {
     try {
       const res = await fetch('/api/accounts');
@@ -1186,6 +1199,10 @@
           ${proxyInfo.invalid ? 'Fix Proxy' : 'Edit Proxy'}
         </button>
       </div>
+      ${acc.adspower_profile_id ? `
+      <div class="profile-info-row" style="padding: 0 0.6rem; margin: -0.25rem 0 0.5rem; font-size: 0.7rem; color: var(--text-muted); font-family: monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="Browser profile this account signs in through">
+        🧭 Profile: ${escapeHtml(profileNames.get(acc.adspower_profile_id) || acc.adspower_profile_id)}
+      </div>` : ''}
 
       <div class="quota-matrix">
         ${quotaBodyHtml}
@@ -1897,6 +1914,11 @@
     modeLink: document.getElementById('oauth-mode-link'),
     modeHint: document.getElementById('oauth-mode-profile-hint'),
     recheck: document.getElementById('oauth-mode-recheck'),
+    profileWrap: document.getElementById('oauth-dialog-profile-wrap'),
+    profileSelect: document.getElementById('oauth-dialog-profile-select'),
+    profileHint: document.getElementById('oauth-dialog-profile-hint'),
+    proxyFields: document.getElementById('oauth-dialog-proxy-fields'),
+    profiles: [],
     error: document.getElementById('oauth-dialog-error'),
     link: document.getElementById('oauth-dialog-link'),
     url: document.getElementById('oauth-dialog-url'),
@@ -1908,8 +1930,14 @@
     busy: false,
   };
 
+  // An existing profile brings its own proxy (the server matches it to the Proxy Pool), so the
+  // proxy fields are not needed, and not even allowed to disagree with it.
+  function usingExistingProfile() {
+    return oauthDialogMode() === 'profile' && oauthDialog.profileSelect && oauthDialog.profileSelect.value !== '';
+  }
+
   function oauthDialogHasProxy() {
-    return oauthDialog.input.value.trim() !== '' || oauthDialog.poolSelect.value !== '';
+    return usingExistingProfile() || oauthDialog.input.value.trim() !== '' || oauthDialog.poolSelect.value !== '';
   }
 
   function oauthDialogMode() {
@@ -1921,7 +1949,45 @@
     const profile = oauthDialogMode() === 'profile';
     oauthDialog.openWrap.hidden = profile;
     if (profile) oauthDialog.openBrowser.checked = false;
+    oauthDialog.profileWrap.hidden = !(profile && oauthDialog.profiles.length > 0);
+    oauthDialog.proxyFields.hidden = usingExistingProfile();
     oauthDialog.start.textContent = profile ? 'Open profile & sign in' : 'Start sign-in';
+  }
+
+  // Fills the profile list: the profiles already in AliasMode, with the account each belongs to. One
+  // account per profile keeps the accounts apart, so a taken profile is not selectable; neither is
+  // one whose proxy is not in the Proxy Pool (its credentials are needed for the token exchange).
+  async function loadProfileChoices() {
+    oauthDialog.profiles = [];
+    oauthDialog.profileSelect.innerHTML = '';
+    try {
+      const res = await fetch('/api/onboarding/profiles');
+      if (!res.ok) return;
+      oauthDialog.profiles = (await res.json()).profiles || [];
+    } catch (_) {
+      return; // creating a new profile still works
+    }
+    const choices = oauthDialog.profiles;
+    const usable = (p) => !p.linked_to && p.proxy_in_pool;
+    const label = (p) => {
+      let state = 'free';
+      if (p.linked_to) state = 'in use by ' + p.linked_to;
+      else if (!p.proxy) state = 'proxy unknown';
+      else if (!p.proxy_in_pool) state = 'proxy not in the pool';
+      return `${p.name} — ${state}`;
+    };
+    const firstFree = choices.find(usable);
+    oauthDialog.profileSelect.innerHTML =
+      '<option value="">Create a new profile (uses the proxy below)</option>' +
+      choices.map((p) => `<option value="${escapeHtml(p.id)}"${usable(p) ? '' : ' disabled'}>${escapeHtml(label(p))}</option>`).join('');
+    // Never preselect a profile: each one is a different proxy/IP, and a stray click on Start must
+    // not onboard an account through one nobody chose.
+    oauthDialog.profileSelect.value = '';
+    oauthDialog.profileHint.textContent = firstFree
+      ? 'Pick a free profile (it signs in through its own proxy), or create a new one with the proxy below.'
+      : 'No free profile with a proxy from the pool: a new one will be created with the proxy below.';
+    applyOAuthMode();
+    updateOAuthDialogState();
   }
 
   // Asks the server whether an isolated browser profile (AliasMode / ADS Power) can be used now.
@@ -1998,7 +2064,11 @@
     oauthDialog.el.showModal();
     oauthDialog.input.focus();
     fillOAuthDialogPool();
-    checkProfileAPI();
+    oauthDialog.profiles = [];
+    oauthDialog.profileSelect.innerHTML = '';
+    oauthDialog.profileWrap.hidden = true;
+    oauthDialog.proxyFields.hidden = false;
+    checkProfileAPI().then(loadProfileChoices);
   }
 
   // After the link is shown, watch for the account to appear (or its proxy to change, for a
@@ -2026,6 +2096,7 @@
           oauthDialog.el.close();
           showToast('Account added through its proxy', 'success', 4000);
           fetchAccounts();
+          loadProfileNames();
           fetchStatus();
           loadProxyPool();
           return;
@@ -2045,7 +2116,10 @@
     const poolID = oauthDialog.poolSelect.value;
     const mode = oauthDialogMode();
     const payload = { mode, open_browser: mode === 'link' && oauthDialog.openBrowser.checked };
-    if (poolID) payload.pool_id = poolID;
+    if (usingExistingProfile()) {
+      // The proxy comes from the profile itself (the server takes it from the Proxy Pool).
+      payload.profile_id = oauthDialog.profileSelect.value;
+    } else if (poolID) payload.pool_id = poolID;
     else payload.proxy_url = oauthDialog.input.value.trim();
 
     try {
@@ -2105,7 +2179,12 @@
     oauthDialog.close.addEventListener('click', () => oauthDialog.el.close());
     oauthDialog.modeProfile.addEventListener('change', applyOAuthMode);
     oauthDialog.modeLink.addEventListener('change', applyOAuthMode);
-    oauthDialog.recheck.addEventListener('click', checkProfileAPI);
+    oauthDialog.profileSelect.addEventListener('change', () => {
+      setOAuthDialogError('');
+      applyOAuthMode();
+      updateOAuthDialogState();
+    });
+    oauthDialog.recheck.addEventListener('click', () => checkProfileAPI().then(loadProfileChoices));
     oauthDialog.el.addEventListener('close', () => {
       stopOAuthPolling();
       oauthDialog.input.value = ''; // never leave a typed proxy credential in the DOM
@@ -2443,6 +2522,7 @@
     initListeners();
     fetchStatus();
     fetchAccounts();
+    loadProfileNames();
     loadProxyPool();
     fetchMetrics();
     fetchConfig();

@@ -1,5 +1,9 @@
 # Antigravity Account Switcher
 
+- **No dashboard:** o diálogo **Add account** (modo AliasMode profile) lista esses perfis com a conta de cada
+  um e deixa entrar numa conta por um perfil livre: o proxy vem então do perfil (cruzado com o Proxy Pool pelo
+  nome `proxy-<host>-<porta>`), então o login e a troca do código saem do mesmo IP. Uma conta por perfil;
+  nada vem pré-selecionado.
 [English](README.md) | [Português (Brasil)](README.pt-BR.md)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
