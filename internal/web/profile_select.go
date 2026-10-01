@@ -65,7 +65,36 @@ func listAllProfiles(ctx context.Context, api profileAPI) ([]adspower.Profile, e
 	return out, nil
 }
 
-// profileOwners maps a profile id to the email of the account onboarded through it.
+// A browser profile may be shared by accounts of DIFFERENT services (a Google account and an OpenAI
+// account see nothing of each other), but never by two accounts of the same one: that is what keeps
+// the accounts of a service apart.
+const (
+	providerGoogle = "google"
+	providerCodex  = "codex"
+)
+
+// profileOwnersFor maps a profile id to the email of the account of that service onboarded through it.
+func (a *APIHandler) profileOwnersFor(ctx context.Context, provider string) map[string]string {
+	if provider == providerCodex {
+		owners := map[string]string{}
+		if a.codexSvc == nil {
+			return owners
+		}
+		accs, err := a.codexSvc.Repo.List(ctx)
+		if err != nil {
+			return owners
+		}
+		for _, acc := range accs {
+			if acc != nil && acc.AdsPowerProfileID != "" {
+				owners[acc.AdsPowerProfileID] = acc.Email
+			}
+		}
+		return owners
+	}
+	return a.profileOwners(ctx)
+}
+
+// profileOwners maps a profile id to the email of the Google account onboarded through it.
 func (a *APIHandler) profileOwners(ctx context.Context) map[string]string {
 	owners := map[string]string{}
 	if a.accountRepo == nil {
@@ -92,8 +121,11 @@ type profileChoice struct {
 	Proxy string `json:"proxy,omitempty"`
 	// ProxyInPool says the credentials for that endpoint are in the Proxy Pool, so it can be used.
 	ProxyInPool bool `json:"proxy_in_pool"`
-	// LinkedTo is the email of the account already onboarded through the profile.
-	LinkedTo string `json:"linked_to,omitempty"`
+	// LinkedTo is the email of the Google account already onboarded through the profile, and
+	// CodexLinkedTo that of the OpenAI (Codex) one: each service allows one account per profile, but a
+	// profile can hold one of each.
+	LinkedTo      string `json:"linked_to,omitempty"`
+	CodexLinkedTo string `json:"codex_linked_to,omitempty"`
 }
 
 // HandleOnboardingProfiles serves GET /api/onboarding/profiles: the existing browser profiles, with
@@ -115,10 +147,11 @@ func (a *APIHandler) HandleOnboardingProfiles(w http.ResponseWriter, r *http.Req
 	}
 	pool, _ := a.storedProxyPool()
 	owners := a.profileOwners(r.Context())
+	codexOwners := a.profileOwnersFor(r.Context(), providerCodex)
 
 	out := make([]profileChoice, 0, len(profiles))
 	for _, p := range profiles {
-		c := profileChoice{ID: p.UserID, Name: p.Name, LinkedTo: owners[p.UserID]}
+		c := profileChoice{ID: p.UserID, Name: p.Name, LinkedTo: owners[p.UserID], CodexLinkedTo: codexOwners[p.UserID]}
 		if ep, ok := endpointFromProfileName(p.Name); ok {
 			c.Proxy = ep
 			_, c.ProxyInPool = poolProxyByEndpoint(pool, ep)
@@ -129,11 +162,16 @@ func (a *APIHandler) HandleOnboardingProfiles(w http.ResponseWriter, r *http.Req
 	writeJSON(w, http.StatusOK, map[string]any{"profiles": out})
 }
 
-// existingProfileProxy checks that profile id can be used for a new account and returns the proxy to
-// onboard through. The proxy always comes from the pool, matched to the profile's own endpoint: the
+// existingProfileProxy is existingProfileProxyFor for a Google account.
+func (a *APIHandler) existingProfileProxy(ctx context.Context, id, chosenProxy string) (string, int, error) {
+	return a.existingProfileProxyFor(ctx, id, chosenProxy, providerGoogle)
+}
+
+// existingProfileProxyFor checks that profile id can be used for a new account of the given service
+// and returns the proxy to onboard through. The proxy always comes from the pool, matched to the profile's own endpoint: the
 // token exchange must leave from the same IP as the profile's browser, so a different proxy chosen
 // alongside is refused. It returns an HTTP status with the error.
-func (a *APIHandler) existingProfileProxy(ctx context.Context, id, chosenProxy string) (string, int, error) {
+func (a *APIHandler) existingProfileProxyFor(ctx context.Context, id, chosenProxy, provider string) (string, int, error) {
 	conn, _, err := a.connectProfileAPI(ctx)
 	if err != nil {
 		return "", http.StatusBadGateway, fmt.Errorf("the browser-profile API is not available: %w", err)
@@ -152,8 +190,8 @@ func (a *APIHandler) existingProfileProxy(ctx context.Context, id, chosenProxy s
 	if profile == nil {
 		return "", http.StatusNotFound, fmt.Errorf("no browser profile with id %q", id)
 	}
-	if owner := a.profileOwners(ctx)[id]; owner != "" {
-		return "", http.StatusConflict, fmt.Errorf("the profile %q already belongs to %s: one account per profile keeps the accounts apart", profile.Name, owner)
+	if owner := a.profileOwnersFor(ctx, provider)[id]; owner != "" {
+		return "", http.StatusConflict, fmt.Errorf("the profile %q already belongs to %s: one %s account per profile keeps the accounts of a service apart", profile.Name, owner, provider)
 	}
 	endpoint, ok := endpointFromProfileName(profile.Name)
 	if !ok {

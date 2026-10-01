@@ -32,6 +32,10 @@
     copy: document.getElementById('codex-dialog-copy'),
     status: document.getElementById('codex-dialog-status'),
     proxyFields: document.getElementById('codex-dialog-proxy-fields'),
+    profileWrap: document.getElementById('codex-dialog-profile-wrap'),
+    profileSelect: document.getElementById('codex-dialog-profile-select'),
+    profileHint: document.getElementById('codex-dialog-profile-hint'),
+    profiles: [],
     warmup: document.getElementById('codex-dialog-warmup'),
     times: document.getElementById('codex-dialog-times'),
     warmupOn: document.getElementById('codex-dialog-warmup-on'),
@@ -285,8 +289,14 @@
 
   // ---- dialog ----
 
+  // An existing profile brings its own proxy (the server matches it to the Proxy Pool), so the proxy
+  // fields are not needed, and not even allowed to disagree with it.
+  function usingProfile() {
+    return dlg.kind === 'add' && mode() === 'profile' && dlg.profileSelect.value !== '';
+  }
+
   function hasProxy() {
-    return dlg.input.value.trim() !== '' || dlg.poolSelect.value !== '';
+    return usingProfile() || dlg.input.value.trim() !== '' || dlg.poolSelect.value !== '';
   }
 
   function updateStart() {
@@ -349,7 +359,42 @@
   function applyMode() {
     if (dlg.kind === 'add') {
       dlg.start.textContent = mode() === 'profile' ? 'Open profile & sign in' : 'Start sign-in';
+      dlg.profileWrap.hidden = !(mode() === 'profile' && dlg.profiles.length > 0);
+      dlg.proxyFields.hidden = usingProfile();
     }
+  }
+
+  // Fills the profile list. A profile may hold one account of EACH service (an OpenAI and a Google
+  // account share nothing), but never two of the same one, so only a profile that already has a Codex
+  // account is closed here; one with just a Google account is offered, and says so. Nothing is
+  // preselected: each profile is a different IP, and a stray click must not use one nobody chose.
+  async function loadProfileChoices() {
+    dlg.profiles = [];
+    dlg.profileSelect.innerHTML = '';
+    try {
+      const res = await fetch('/api/onboarding/profiles');
+      if (!res.ok) return;
+      dlg.profiles = (await res.json()).profiles || [];
+    } catch (_) {
+      return; // creating a new profile still works
+    }
+    const usable = (p) => !p.codex_linked_to && p.proxy_in_pool;
+    const label = (p) => {
+      let state = 'free';
+      if (p.codex_linked_to) state = 'in use by ' + p.codex_linked_to;
+      else if (!p.proxy) state = 'proxy unknown';
+      else if (!p.proxy_in_pool) state = 'proxy not in the pool';
+      else if (p.linked_to) state = 'free (also has Google: ' + p.linked_to + ')';
+      return p.name + ' — ' + state;
+    };
+    dlg.profileSelect.innerHTML = '<option value="">Create a new profile (uses the proxy below)</option>' +
+      dlg.profiles.map((p) => '<option value="' + esc(p.id) + '"' + (usable(p) ? '' : ' disabled') + '>' + esc(label(p)) + '</option>').join('');
+    dlg.profileSelect.value = '';
+    dlg.profileHint.textContent = dlg.profiles.some(usable)
+      ? 'Pick a profile (it signs in through its own proxy), or create a new one with the proxy below.'
+      : 'No free profile with a proxy from the pool: a new one will be created with the proxy below.';
+    applyMode();
+    updateStart();
   }
 
   function openDialog(kind, account) {
@@ -382,6 +427,10 @@
     }
     dlg.modeProfile.disabled = true;
     dlg.modeLink.checked = true;
+    dlg.profiles = [];
+    dlg.profileSelect.innerHTML = '';
+    dlg.profileWrap.hidden = true;
+    if (kind === 'add') dlg.proxyFields.hidden = false;
     updateStart();
     dlg.el.showModal();
     if (warming) {
@@ -390,7 +439,7 @@
     }
     dlg.input.focus();
     fillPool();
-    if (adding) checkProfileAPI();
+    if (adding) checkProfileAPI().then(loadProfileChoices);
   }
 
   // After the link is shown, watch for the account to appear or be re-authenticated.
@@ -479,6 +528,12 @@
       }
 
       payload.mode = mode();
+      if (usingProfile()) {
+        // The proxy comes from the profile itself (the server takes it from the Proxy Pool).
+        delete payload.pool_id;
+        delete payload.proxy_url;
+        payload.profile_id = dlg.profileSelect.value;
+      }
       const res = await post('/api/codex/login/start', payload);
       if (!res.ok) { setError(await errorMessage(res)); release(); return; }
       const data = await res.json();
@@ -543,6 +598,7 @@
   dlg.pasteBtn.addEventListener('click', completePaste);
   dlg.pasteInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); completePaste(); } });
   dlg.modeProfile.addEventListener('change', applyMode);
+  dlg.profileSelect.addEventListener('change', () => { setError(''); applyMode(); updateStart(); });
   dlg.modeLink.addEventListener('change', applyMode);
   dlg.copy.addEventListener('click', () => {
     if (navigator.clipboard) navigator.clipboard.writeText(dlg.url.value).then(() => toast('Sign-in link copied', 'success'), () => {});

@@ -1974,6 +1974,7 @@
       if (p.linked_to) state = 'in use by ' + p.linked_to;
       else if (!p.proxy) state = 'proxy unknown';
       else if (!p.proxy_in_pool) state = 'proxy not in the pool';
+      else if (p.codex_linked_to) state = `free (also has Codex: ${p.codex_linked_to})`;
       return `${p.name} — ${state}`;
     };
     const firstFree = choices.find(usable);
