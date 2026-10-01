@@ -30,11 +30,15 @@ type Account struct {
 	// AdsPowerProfileID links this account to the ADS Power browser profile it was onboarded
 	// through, so re-authentication reuses the same isolated profile + proxy. Empty for accounts
 	// onboarded outside ADS Power.
-	AdsPowerProfileID string        `json:"adspower_profile_id,omitempty"`
-	IsActive          bool          `json:"is_active"`
-	Status            AccountStatus `json:"status"`
-	CreatedAt         time.Time     `json:"created_at"`
-	UpdatedAt         time.Time     `json:"updated_at"`
+	AdsPowerProfileID string `json:"adspower_profile_id,omitempty"`
+	// OAuthClientID is the Google OAuth client that issued this account's refresh token. Google binds a
+	// refresh token to its issuing client, so a renewal must use the same one (empty: not known yet; it
+	// is learned at the first renewal).
+	OAuthClientID string        `json:"oauth_client_id,omitempty"`
+	IsActive      bool          `json:"is_active"`
+	Status        AccountStatus `json:"status"`
+	CreatedAt     time.Time     `json:"created_at"`
+	UpdatedAt     time.Time     `json:"updated_at"`
 }
 
 // IsTokenExpired checks if the access token has expired or is within the safety margin.

@@ -286,6 +286,26 @@ muda nada, e nunca remove um proxy: conta sem proxy é deixada como está. A se�
 do dashboard mostra a mesma comparação e tem um botão **Bind in OmniRoute** (com clique de
 confirmação) para as contas cujo proxy é diferente ou está ausente lá.
 
+
+**Importa qual cliente do Google fez o login da conta.** O Google amarra um refresh token ao cliente OAuth
+que o emitiu, e o OmniRoute renova todo token do Antigravity (os providers `agy` e `antigravity` do mesmo
+jeito) com o cliente dele (`1071006060591-…`). O Antigravity 2.0 instalado traz mais de um cliente, e o
+switcher usava o primeiro por padrão (`884354919052-…`). Um token emitido pelo cliente do switcher é aceito
+na importação, funciona por cerca de uma hora (a vida do access token) e depois a renovação do OmniRoute
+falha para sempre com `unauthorized_client`: a conexão parece saudável, depois fica inativa, com o
+disjuntor de renovação aberto e sem modelos sincronizados. Trocar `agy` por `antigravity` não resolve, já
+que os dois renovam do mesmo jeito.
+
+- Cada conta agora lembra qual cliente emitiu o token dela e renova com ele; uma conta de antes disso
+  descobre no primeiro refresh. Fixar um cliente só o escolhe para logins **novos**.
+- `config set oauth_client_id 1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com`
+  faz os logins novos usarem o cliente do OmniRoute (`ANTIGRAVITY_CLIENT_ID` faz o mesmo e vence). Uma
+  conta já logada com o outro cliente precisa entrar de novo; a conexão antiga no OmniRoute é então
+  trocada com `export-omniroute --overwrite`.
+- `export-omniroute --api` agora confere cada conta antes de enviar: pergunta ao Google, pelo proxy da
+  própria conta (nunca pelo seu IP real), se o cliente do OmniRoute consegue renovar o token, e não exporta
+  o que ele não conseguiria, dizendo por quê. `--skip-client-check` exporta mesmo assim;
+  `--omniroute-client-id` serve para um OmniRoute cujo operador definiu `ANTIGRAVITY_OAUTH_CLIENT_ID`.
 ---
 
 ### Contas OpenAI Codex

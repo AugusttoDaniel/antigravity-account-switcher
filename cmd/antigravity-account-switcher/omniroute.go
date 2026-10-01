@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/domain"
 	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/egress"
 	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/oauth"
 	"github.com/AugusttoDaniel/antigravity-account-switcher/internal/omniroute"
@@ -36,6 +37,8 @@ func runExportOmniRoute(args []string) {
 	allowDuplicate := fs.Bool("allow-duplicate", false, "Import an account even if OmniRoute already has it through its own Antigravity login (creates a second connection)")
 	noRefresh := fs.Bool("no-refresh", false, "Do not refresh tokens before export (export may carry an expired access_token)")
 	filter := fs.String("filter", "", "Only export accounts whose email contains this substring")
+	omniClientID := fs.String("omniroute-client-id", omniroute.BuiltinAntigravityClientID, "Google OAuth client OmniRoute renews Antigravity tokens with (change it only if its operator set ANTIGRAVITY_OAUTH_CLIENT_ID)")
+	skipClientCheck := fs.Bool("skip-client-check", false, "Export even if OmniRoute could not renew the token (it would stop working after about an hour)")
 	_ = fs.Parse(args)
 
 	if strings.TrimSpace(*outDir) == "" && !*useAPI {
@@ -80,6 +83,13 @@ func runExportOmniRoute(args []string) {
 		}
 	}
 	alreadyThere := 0
+	clientRefused := 0
+	defer func() {
+		if clientRefused > 0 {
+			fmt.Printf("\n%d account(s) were NOT exported because OmniRoute could not renew their tokens (see above). Nothing was sent for them.\n", clientRefused)
+			os.Exit(1)
+		}
+	}()
 
 	type exportItem struct {
 		email    string
@@ -109,6 +119,16 @@ func runExportOmniRoute(args []string) {
 					items = append(items, exportItem{email: acc.Email, proxyURL: acc.ProxyURL, skipAPI: true})
 					continue
 				}
+			}
+		}
+
+		// Google binds a refresh token to the client that issued it: if OmniRoute renews with another
+		// client, the account works for an hour and then dies. Check before handing it over.
+		if *useAPI && !skipAPI && !*skipClientCheck {
+			if problem := omniRouteClientProblem(ctx, oauthService, accRepo, acc, *omniClientID); problem != "" {
+				fmt.Printf("  %s: NOT exported: %s\n", acc.Email, problem)
+				clientRefused++
+				continue
 			}
 		}
 
@@ -348,4 +368,36 @@ func sanitizeFilename(s string) string {
 		return "account"
 	}
 	return b.String()
+}
+
+// omniRouteClientProblem says why an account's tokens could not be renewed by OmniRoute, or "" when
+// they can. Google binds a refresh token to the OAuth client that issued it; OmniRoute renews with its
+// own client, so a token issued by another one dies when its access token expires (about an hour).
+func omniRouteClientProblem(ctx context.Context, svc *oauth.OAuthService, repo *sqlite.AccountRepository, acc *domain.Account, omniClient string) string {
+	short := func(id string) string { return strings.SplitN(id, "-", 2)[0] + "-..." }
+	fix := fmt.Sprintf("sign the account in again through the client OmniRoute uses: run 'config set oauth_client_id %s', then add the account again", omniClient)
+
+	switch {
+	case acc.OAuthClientID == omniClient:
+		return ""
+	case acc.OAuthClientID != "":
+		return fmt.Sprintf("its token was issued by client %s but OmniRoute renews with %s, which Google refuses, so OmniRoute could never renew it. To fix: %s",
+			short(acc.OAuthClientID), short(omniClient), fix)
+	}
+
+	// Origin unknown: ask Google, through the account's own proxy (never from this machine's real IP).
+	if acc.ProxyURL == "" {
+		return "which client issued its token is unknown, and it has no proxy to check it through (the check must not leave from your real IP): set one with set-account-proxy"
+	}
+	switch svc.ProbeRefresh(ctx, acc.RefreshToken, omniClient, acc.ProxyURL) {
+	case oauth.ProbeOK:
+		_ = repo.UpdateOAuthClientID(ctx, acc.ID, omniClient) // it renews with that client, so that is the issuer
+		return ""
+	case oauth.ProbeMismatch:
+		return "Google says the client OmniRoute renews with did not issue this token, so OmniRoute could never renew it. To fix: " + fix
+	case oauth.ProbeRevoked:
+		return "its refresh token was revoked or expired: sign the account in again"
+	default:
+		return "could not confirm that OmniRoute can renew this token (Google gave no answer that settles it); pass --skip-client-check to export anyway"
+	}
 }

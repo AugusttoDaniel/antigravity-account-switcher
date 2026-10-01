@@ -163,6 +163,13 @@ CREATE TABLE IF NOT EXISTS codex_warmup (
 );
 `,
 	},
+	{
+		Version:     8,
+		Description: "add_account_oauth_client_id",
+		SQL: `
+ALTER TABLE accounts ADD COLUMN oauth_client_id TEXT NOT NULL DEFAULT '';
+`,
+	},
 }
 
 // Migrate applies all pending schema migrations to the database.

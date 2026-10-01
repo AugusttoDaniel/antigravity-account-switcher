@@ -89,15 +89,16 @@ func AutoImportExistingAccount(ctx context.Context, repo domain.AccountRepositor
 	}
 
 	acc := &domain.Account{
-		ID:           uuid.New().String(),
-		Email:        userInfo.Email,
-		RefreshToken: acp.RefreshToken,
-		AccessToken:  resp.AccessToken,
-		TokenExpiry:  time.Now().UTC().Add(time.Duration(resp.ExpiresIn) * time.Second),
-		IsActive:     true,
-		Status:       domain.AccountStatusActive,
-		CreatedAt:    time.Now().UTC(),
-		UpdatedAt:    time.Now().UTC(),
+		ID:            uuid.New().String(),
+		Email:         userInfo.Email,
+		RefreshToken:  acp.RefreshToken,
+		AccessToken:   resp.AccessToken,
+		TokenExpiry:   time.Now().UTC().Add(time.Duration(resp.ExpiresIn) * time.Second),
+		OAuthClientID: resp.ClientID,
+		IsActive:      true,
+		Status:        domain.AccountStatusActive,
+		CreatedAt:     time.Now().UTC(),
+		UpdatedAt:     time.Now().UTC(),
 	}
 
 	if err := repo.Create(ctx, acc); err != nil {

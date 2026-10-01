@@ -45,6 +45,10 @@ type Config struct {
 	AdsPowerAPIURL string `json:"adspower_api_url,omitempty"`
 	AdsPowerAPIKey string `json:"adspower_api_key,omitempty"`
 	AdsPowerEngine string `json:"adspower_engine,omitempty"`
+	// OAuthClientID pins the Google OAuth client used for NEW sign-ins (the same as ANTIGRAVITY_CLIENT_ID,
+	// which wins when both are set). Pin the client OmniRoute renews with so tokens exported to it keep
+	// renewing; accounts already signed in keep renewing with the client that issued their token.
+	OAuthClientID string `json:"oauth_client_id,omitempty"`
 }
 
 // ConfigDir returns the default configuration directory (~/.config/antigravity-account-switcher).

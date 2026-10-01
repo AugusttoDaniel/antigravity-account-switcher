@@ -46,8 +46,8 @@ func (r *AccountRepository) Create(ctx context.Context, acc *domain.Account) err
 	query := `
 		INSERT INTO accounts (
 			id, email, refresh_token, access_token, token_expiry,
-			proxy_url, adspower_profile_id, is_active, status, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			proxy_url, adspower_profile_id, oauth_client_id, is_active, status, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 	_, err := r.db.ExecContext(ctx, query,
 		acc.ID,
@@ -57,6 +57,7 @@ func (r *AccountRepository) Create(ctx context.Context, acc *domain.Account) err
 		expiryStr,
 		acc.ProxyURL,
 		acc.AdsPowerProfileID,
+		acc.OAuthClientID,
 		acc.IsActive,
 		string(acc.Status),
 		acc.CreatedAt.Format(time.RFC3339),
@@ -75,7 +76,7 @@ func (r *AccountRepository) Create(ctx context.Context, acc *domain.Account) err
 // GetByID retrieves an account by ID.
 func (r *AccountRepository) GetByID(ctx context.Context, id string) (*domain.Account, error) {
 	query := `
-		SELECT id, email, refresh_token, access_token, token_expiry, proxy_url, adspower_profile_id, is_active, status, created_at, updated_at
+		SELECT id, email, refresh_token, access_token, token_expiry, proxy_url, adspower_profile_id, oauth_client_id, is_active, status, created_at, updated_at
 		FROM accounts
 		WHERE id = ?
 	`
@@ -86,7 +87,7 @@ func (r *AccountRepository) GetByID(ctx context.Context, id string) (*domain.Acc
 // GetByEmail retrieves an account by email.
 func (r *AccountRepository) GetByEmail(ctx context.Context, email string) (*domain.Account, error) {
 	query := `
-		SELECT id, email, refresh_token, access_token, token_expiry, proxy_url, adspower_profile_id, is_active, status, created_at, updated_at
+		SELECT id, email, refresh_token, access_token, token_expiry, proxy_url, adspower_profile_id, oauth_client_id, is_active, status, created_at, updated_at
 		FROM accounts
 		WHERE email = ?
 	`
@@ -97,7 +98,7 @@ func (r *AccountRepository) GetByEmail(ctx context.Context, email string) (*doma
 // GetActive retrieves the single currently active account.
 func (r *AccountRepository) GetActive(ctx context.Context) (*domain.Account, error) {
 	query := `
-		SELECT id, email, refresh_token, access_token, token_expiry, proxy_url, adspower_profile_id, is_active, status, created_at, updated_at
+		SELECT id, email, refresh_token, access_token, token_expiry, proxy_url, adspower_profile_id, oauth_client_id, is_active, status, created_at, updated_at
 		FROM accounts
 		WHERE is_active = 1
 		LIMIT 1
@@ -113,7 +114,7 @@ func (r *AccountRepository) GetActive(ctx context.Context) (*domain.Account, err
 // List returns all accounts in the pool ordered by creation date.
 func (r *AccountRepository) List(ctx context.Context) ([]*domain.Account, error) {
 	query := `
-		SELECT id, email, refresh_token, access_token, token_expiry, proxy_url, adspower_profile_id, is_active, status, created_at, updated_at
+		SELECT id, email, refresh_token, access_token, token_expiry, proxy_url, adspower_profile_id, oauth_client_id, is_active, status, created_at, updated_at
 		FROM accounts
 		ORDER BY created_at ASC
 	`
@@ -291,7 +292,7 @@ func (r *AccountRepository) Delete(ctx context.Context, id string) error {
 // excluding the given account ID (for failover rotation).
 func (r *AccountRepository) GetNextAvailable(ctx context.Context, excludeID string) (*domain.Account, error) {
 	query := `
-		SELECT id, email, refresh_token, access_token, token_expiry, proxy_url, adspower_profile_id, is_active, status, created_at, updated_at
+		SELECT id, email, refresh_token, access_token, token_expiry, proxy_url, adspower_profile_id, oauth_client_id, is_active, status, created_at, updated_at
 		FROM accounts
 		WHERE status = 'active'
 		  AND (? = '' OR id != ?)
@@ -323,6 +324,7 @@ func (r *AccountRepository) scanAccount(scanner rowScanner) (*domain.Account, er
 		&expiryStr,
 		&acc.ProxyURL,
 		&acc.AdsPowerProfileID,
+		&acc.OAuthClientID,
 		&isActiveInt,
 		&statusStr,
 		&createdStr,
@@ -342,4 +344,18 @@ func (r *AccountRepository) scanAccount(scanner rowScanner) (*domain.Account, er
 	acc.UpdatedAt, _ = parseDBTime(updatedStr)
 
 	return &acc, nil
+}
+
+// UpdateOAuthClientID records which Google OAuth client issued the account's refresh token, so
+// renewals use that same client.
+func (r *AccountRepository) UpdateOAuthClientID(ctx context.Context, id string, clientID string) error {
+	nowStr := time.Now().UTC().Format(time.RFC3339)
+	res, err := r.db.ExecContext(ctx, "UPDATE accounts SET oauth_client_id = ?, updated_at = ? WHERE id = ?", clientID, nowStr, id)
+	if err != nil {
+		return fmt.Errorf("failed to update the oauth client id: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return domain.ErrAccountNotFound
+	}
+	return nil
 }
