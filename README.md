@@ -342,6 +342,18 @@ antigravity-account-switcher codex-set-proxy me@example.com "http://user:pass@ho
   can listen there. The switcher detects it and switches to a manual step: after you sign in, the
   browser lands on a page that fails to load; copy its full address and paste it into the dashboard
   (or into the terminal, for `codex-add`). The address carries a one-time code, so do not share it.
+- **Warm-up:** a Codex account's rate-limit window starts with its first request. `codex-warmup [account]`
+  sends one minimal request through the account's own proxy right now, and `codex-warmup-schedule <account>
+  --times "07:00,12:30"` does it automatically at those local times of day (`--off` turns it off, no flags
+  shows it). The schedule runs **inside `serve`**, so nothing happens while the switcher is not running.
+  It is off for every account until you turn it on. It spends a little quota each time, and every request
+  leaves from that account's proxy IP, so it is deliberately conservative: at most 6 times a day, each
+  slot runs once (no retry after a failure), accounts run one at a time with a pause between them, each
+  slot starts at a stable per-account offset of up to 90 seconds, and a slot the switcher missed by more
+  than 10 minutes is recorded as missed rather than fired late. The model is not hard-coded: it is the one
+  the account's own model list ranks first (`--model` overrides). Accounts with no proxy, handed to
+  OmniRoute, or needing a new sign-in are skipped, never sent. The dashboard has **Warm** (asks for a
+  second click) and **Schedule** per account, and shows the times and the last result.
 - Protocol constants (issuer, public client id, scopes, `auth.json` layout) come from the
   Apache-2.0 [openai/codex](https://github.com/openai/codex) repository. Using several accounts
   is subject to OpenAI's terms; you are responsible for complying with them.

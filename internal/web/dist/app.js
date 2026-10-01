@@ -2248,6 +2248,10 @@
         pillClass = 'pill-fallback';
         pillText = 'MODEL FALLBACK';
         break;
+      case 'codex_warmup':
+        pillClass = 'pill-restored';
+        pillText = 'WARM-UP';
+        break;
       case 'error':
         pillClass = 'pill-error';
         pillText = 'ERROR';

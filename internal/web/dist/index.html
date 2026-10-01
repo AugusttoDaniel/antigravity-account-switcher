@@ -573,6 +573,7 @@
           </span>
         </label>
       </fieldset>
+      <div id="codex-dialog-proxy-fields">
       <div id="codex-dialog-pool" class="proxy-dialog-pool" hidden>
         <label for="codex-dialog-pool-select" class="proxy-dialog-label">Proxy from the pool</label>
         <select id="codex-dialog-pool-select" class="form-select mono"></select>
@@ -580,6 +581,13 @@
       </div>
       <label for="codex-dialog-input" class="proxy-dialog-label">Proxy URL</label>
       <input id="codex-dialog-input" class="proxy-dialog-input mono" type="text" autocomplete="off" spellcheck="false" placeholder="http://user:pass@host:port">
+      </div>
+      <div id="codex-dialog-warmup" hidden>
+        <p class="proxy-dialog-hint">At these local times of day, while the switcher is running, one minimal request is sent through the account's proxy to start its rate-limit window. It spends a little quota. Nothing runs unless this is on; a slot missed by more than 10 minutes is skipped, not fired late.</p>
+        <label for="codex-dialog-times" class="proxy-dialog-label">Times (24 h, up to 6)</label>
+        <input id="codex-dialog-times" class="proxy-dialog-input mono" type="text" autocomplete="off" spellcheck="false" placeholder="07:00, 12:30">
+        <label class="pool-check-label proxy-dialog-open"><input type="checkbox" id="codex-dialog-warmup-on"> Turn the scheduled warm-up on</label>
+      </div>
       <p id="codex-dialog-error" class="proxy-dialog-error" role="alert" hidden></p>
       <div id="codex-dialog-link" class="oauth-dialog-link" hidden>
         <label for="codex-dialog-url" id="codex-dialog-url-label" class="proxy-dialog-label">Sign-in link</label>

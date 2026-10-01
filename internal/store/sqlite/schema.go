@@ -153,6 +153,16 @@ CREATE TABLE IF NOT EXISTS codex_usage (
 ALTER TABLE codex_accounts ADD COLUMN omniroute_exported_at TEXT NOT NULL DEFAULT '';
 `,
 	},
+	{
+		Version:     7,
+		Description: "add_codex_warmup",
+		SQL: `
+CREATE TABLE IF NOT EXISTS codex_warmup (
+    account_id TEXT PRIMARY KEY REFERENCES codex_accounts(id) ON DELETE CASCADE,
+    payload TEXT NOT NULL
+);
+`,
+	},
 }
 
 // Migrate applies all pending schema migrations to the database.

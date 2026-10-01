@@ -52,6 +52,19 @@ func newCodexEnv(t *testing.T, loginEmail string) *codexEnv {
 	repo := sqlite.NewCodexAccountRepository(db)
 
 	issuer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/codex/models":
+			_, _ = w.Write([]byte(`{"models":[{"slug":"model-b","visibility":"list","priority":7},{"slug":"model-a","visibility":"list","priority":1}]}`))
+			return
+		case "/codex/responses":
+			if r.Header.Get("Authorization") == "Bearer at-acct-bad" {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = w.Write([]byte(`data: {"type":"response.completed"}` + "\n\n"))
+			return
+		}
 		if r.URL.Path == "/wham/usage" {
 			if r.Header.Get("Authorization") == "Bearer at-acct-bad" {
 				w.WriteHeader(http.StatusInternalServerError)
@@ -72,7 +85,8 @@ func newCodexEnv(t *testing.T, loginEmail string) *codexEnv {
 	home := t.TempDir()
 	svc := &codex.Service{
 		Repo: repo, Home: home,
-		Usages: repo,
+		Usages:  repo,
+		Warmups: repo,
 		NewClient: func(string) (*codex.Client, error) {
 			// loopbackOnly: a test that forgets to point a URL at the fake must not reach the internet.
 			return &codex.Client{Issuer: issuer.URL, ClientID: "cid", BackendURL: issuer.URL,
