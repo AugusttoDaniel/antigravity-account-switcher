@@ -41,14 +41,17 @@ type Server struct {
 	// IgnoreAssignments makes assignments succeed without taking effect, to simulate an OmniRoute
 	// that accepts a binding but does not apply it (e.g. proxies disabled in its settings).
 	IgnoreAssignments bool
+	// OAuthEmail is the account the fake's OAuth exchange signs in.
+	OAuthEmail string
 
-	mu           sync.Mutex
-	proxies      []Proxy
-	conns        []Connection
-	assigned     map[string]string // connection id -> proxy id
-	codexImports []CodexImport
-	requests     []string
-	nextID       int
+	mu             sync.Mutex
+	proxies        []Proxy
+	conns          []Connection
+	assigned       map[string]string // connection id -> proxy id
+	codexImports   []CodexImport
+	oauthExchanges []string // provider of each completed OAuth exchange
+	requests       []string
+	nextID         int
 }
 
 // New starts the fake and stops it when the test ends.
@@ -153,6 +156,27 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"connections": conns, "total": len(conns)})
 
+	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/oauth/") && strings.HasSuffix(r.URL.Path, "/authorize"):
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"authUrl": "https://accounts.google.com/o/oauth2/v2/auth?state=fake-state", "state": "fake-state",
+			"codeVerifier": "fake-verifier", "redirectUri": "http://localhost:8080/callback",
+		})
+
+	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/oauth/") && strings.HasSuffix(r.URL.Path, "/exchange"):
+		var body struct{ Code, RedirectURI, CodeVerifier, State string }
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if body.Code == "" || body.RedirectURI == "" || body.CodeVerifier != "fake-verifier" || body.State != "fake-state" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":{"message":"Invalid request"}}`))
+			return
+		}
+		provider := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/oauth/"), "/")[0]
+		s.nextID++
+		c := Connection{Provider: provider, ID: "oauth-" + strconv.Itoa(s.nextID), Email: s.OAuthEmail, Name: s.OAuthEmail}
+		s.conns = append(s.conns, c)
+		s.oauthExchanges = append(s.oauthExchanges, provider)
+		_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "connection": map[string]any{"id": c.ID, "email": c.Email, "provider": provider}})
+
 	case r.Method == http.MethodPost && r.URL.Path == "/api/providers/codex-auth/import-bulk":
 		s.importCodex(w, r)
 
@@ -231,6 +255,13 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+// OAuthExchanges returns the provider of each completed OAuth exchange.
+func (s *Server) OAuthExchanges() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.oauthExchanges...)
 }
 
 // CodexImports returns the Codex entries imported so far (tokens included, for assertions only).
