@@ -494,3 +494,9 @@ func (c *Client) ListProxyAssignments(ctx context.Context) ([]ProxyAssignment, e
 		}
 	}
 }
+
+// BuiltinAntigravityClientID is the Google OAuth client OmniRoute renews Antigravity tokens (both its
+// "agy" and "antigravity" providers) with, unless its operator overrode it through
+// ANTIGRAVITY_OAUTH_CLIENT_ID. Google binds a refresh token to the client that issued it, so a token
+// issued by any other client can never be renewed by OmniRoute. It is a public identifier.
+const BuiltinAntigravityClientID = "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com"

@@ -286,6 +286,26 @@ confirmation click) for accounts whose proxy differs or is missing there.
 - **Web Dashboard Privacy Mode:**
   Click the **Privacy** button in the dashboard header or press <kbd>P</kbd> to blur and redact all Google account email addresses across cards, active routing, and live proxy event logs for safe screenshots and screen-sharing.
 
+
+**Which Google client signed the account in matters.** Google binds a refresh token to the OAuth client
+that issued it, and OmniRoute renews every Antigravity token (its `agy` and `antigravity` providers alike)
+with its own client (`1071006060591-…`). The Antigravity 2.0 you have installed carries more than one
+client, and the switcher used the first by default (`884354919052-…`). A token issued by the switcher's
+client is accepted when imported, works for about an hour (the life of its access token), and then
+OmniRoute's renewal fails forever with `unauthorized_client`: the connection looks healthy, then goes
+inactive with its refresh circuit open and no models synced. Swapping `agy` for `antigravity` does not
+help, since both renew the same way.
+
+- Each account now remembers which client issued its token and renews with that one; an account from
+  before this learns it at its first renewal. Pinning a client only chooses it for **new** sign-ins.
+- `config set oauth_client_id 1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com`
+  makes new sign-ins use OmniRoute's client (`ANTIGRAVITY_CLIENT_ID` does the same and wins). An account
+  already signed in with the other client has to be signed in again; the old connection in OmniRoute is
+  then replaced with `export-omniroute --overwrite`.
+- `export-omniroute --api` now checks each account before sending it: it asks Google, through the
+  account's own proxy (never from your real IP), whether OmniRoute's client can renew the token, and does
+  not export one it could not, saying why. `--skip-client-check` exports anyway;
+  `--omniroute-client-id` is for an OmniRoute whose operator set `ANTIGRAVITY_OAUTH_CLIENT_ID`.
 ---
 
 ### OpenAI Codex accounts

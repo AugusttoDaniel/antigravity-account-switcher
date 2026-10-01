@@ -39,6 +39,7 @@ func main() {
 		printUsage()
 		os.Exit(1)
 	}
+	applyOAuthClientPin()
 
 	command := os.Args[1]
 	args := os.Args[2:]
@@ -867,6 +868,8 @@ func executeConfig(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stdout, maskSecret(cfg.AdsPowerAPIKey))
 		case "adspower_engine":
 			fmt.Fprintln(stdout, cfg.AdsPowerEngine)
+		case "oauth_client_id":
+			fmt.Fprintln(stdout, cfg.OAuthClientID)
 		default:
 			fmt.Fprintf(stderr, "Unknown configuration key: %s\n", key)
 			return 1
@@ -938,6 +941,8 @@ func executeConfig(args []string, stdout, stderr io.Writer) int {
 			cfg.AdsPowerAPIKey = strings.TrimSpace(val)
 		case "adspower_engine":
 			cfg.AdsPowerEngine = strings.TrimSpace(val)
+		case "oauth_client_id":
+			cfg.OAuthClientID = strings.TrimSpace(val)
 		default:
 			fmt.Fprintf(stderr, "Unknown configuration key: %s\n", key)
 			return 1
@@ -1072,4 +1077,17 @@ func maskSecret(s string) string {
 		return ""
 	}
 	return "********"
+}
+
+// applyOAuthClientPin makes the configured oauth_client_id the client for new sign-ins by setting
+// ANTIGRAVITY_CLIENT_ID, unless the environment already pins one (the environment wins).
+func applyOAuthClientPin() {
+	if os.Getenv("ANTIGRAVITY_CLIENT_ID") != "" {
+		return
+	}
+	cfg, err := config.Load()
+	if err != nil || cfg == nil || strings.TrimSpace(cfg.OAuthClientID) == "" {
+		return
+	}
+	_ = os.Setenv("ANTIGRAVITY_CLIENT_ID", strings.TrimSpace(cfg.OAuthClientID))
 }

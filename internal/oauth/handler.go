@@ -68,6 +68,18 @@ func ResolveCredentials() (string, string) {
 //  2. An existing Antigravity ACP token file.
 //  3. The installed Antigravity 2.0 binary/bundle.
 func ResolveCredentialCandidates() (ids []string, secrets []string) {
+	return resolveCredentialCandidates(true)
+}
+
+// ResolveAllClientIDs lists every client id found on this machine, ignoring a pinned
+// ANTIGRAVITY_CLIENT_ID: pinning chooses the client for NEW sign-ins, but an account issued by another
+// client still has to be renewed with that one.
+func ResolveAllClientIDs() []string {
+	ids, _ := resolveCredentialCandidates(false)
+	return ids
+}
+
+func resolveCredentialCandidates(honorEnvPin bool) (ids []string, secrets []string) {
 	envID := os.Getenv("ANTIGRAVITY_CLIENT_ID")
 	envSec := os.Getenv("ANTIGRAVITY_CLIENT_SECRET")
 
@@ -103,10 +115,10 @@ func ResolveCredentialCandidates() (ids []string, secrets []string) {
 	}
 
 	// A pinned environment value overrides everything else for its dimension.
-	if envID != "" {
+	if envID != "" && honorEnvPin {
 		ids = []string{envID}
 	}
-	if envSec != "" {
+	if envSec != "" && honorEnvPin {
 		secrets = []string{envSec}
 	}
 
@@ -392,6 +404,8 @@ type TokenResponse struct {
 	IDToken      string `json:"id_token,omitempty"`
 	Error        string `json:"error,omitempty"`
 	ErrorDesc    string `json:"error_description,omitempty"`
+	// ClientID is the OAuth client that issued this response (set by a refresh; not part of the wire format).
+	ClientID string `json:"-"`
 }
 
 // UserInfoResponse represents Google OAuth2 userinfo payload.
@@ -460,6 +474,9 @@ type OAuthService struct {
 	// ambiguous and the user must pin it explicitly (see errAmbiguousCredentials).
 	idCandidates  []string
 	secCandidates []string
+	// allClientIDs is every client id on this machine, ignoring a pinned ANTIGRAVITY_CLIENT_ID: an account
+	// issued by another client is renewed with that one.
+	allClientIDs []string
 }
 
 // NewOAuthService constructs a new OAuthService.
@@ -513,6 +530,11 @@ func NewOAuthService(accountRepo domain.AccountRepository, opts ...Option) *OAut
 		}
 	}
 
+	allIDs := append([]string(nil), ids...)
+	if len(cfg.IDCandidates) == 0 {
+		allIDs = append(allIDs, ResolveAllClientIDs()...)
+	}
+
 	return &OAuthService{
 		cfg:           cfg,
 		accountRepo:   accountRepo,
@@ -521,6 +543,7 @@ func NewOAuthService(accountRepo domain.AccountRepository, opts ...Option) *OAut
 		proxyClients:  make(map[string]*http.Client),
 		idCandidates:  ids,
 		secCandidates: secs,
+		allClientIDs:  allIDs,
 	}
 }
 
@@ -905,6 +928,15 @@ func isInvalidClient(body []byte) bool {
 	return json.Unmarshal(body, &errResp) == nil && errResp.Error == "invalid_client"
 }
 
+// isUnauthorizedClient reports Google's answer when the client is real but did not issue the token: the
+// refresh token is bound to another client.
+func isUnauthorizedClient(body []byte) bool {
+	var errResp struct {
+		Error string `json:"error"`
+	}
+	return json.Unmarshal(body, &errResp) == nil && errResp.Error == "unauthorized_client"
+}
+
 // FetchUserInfo queries the userinfo endpoint to obtain the primary email address,
 // egressing through the operator's direct connection.
 func (s *OAuthService) FetchUserInfo(ctx context.Context, accessToken string) (*UserInfoResponse, error) {
@@ -956,6 +988,11 @@ func (s *OAuthService) UpsertAccount(ctx context.Context, email, accessToken, re
 			}
 			existing.RefreshToken = refreshToken
 		}
+		// The sign-in that just ran issued these tokens through the configured client.
+		if s.cfg.ClientID != "" && existing.OAuthClientID != s.cfg.ClientID && refreshToken != "" {
+			s.recordClientID(ctx, existing.ID, s.cfg.ClientID)
+			existing.OAuthClientID = s.cfg.ClientID
+		}
 		if existing.Status != domain.AccountStatusActive {
 			_ = s.accountRepo.UpdateStatus(ctx, existing.ID, domain.AccountStatusActive)
 			existing.Status = domain.AccountStatusActive
@@ -986,15 +1023,16 @@ func (s *OAuthService) UpsertAccount(ctx context.Context, email, accessToken, re
 	}
 
 	newAcc := &domain.Account{
-		ID:           uuid.NewString(),
-		Email:        email,
-		RefreshToken: refreshToken,
-		AccessToken:  accessToken,
-		TokenExpiry:  expiry,
-		IsActive:     false,
-		Status:       domain.AccountStatusActive,
-		CreatedAt:    time.Now().UTC(),
-		UpdatedAt:    time.Now().UTC(),
+		ID:            uuid.NewString(),
+		Email:         email,
+		RefreshToken:  refreshToken,
+		AccessToken:   accessToken,
+		TokenExpiry:   expiry,
+		OAuthClientID: s.cfg.ClientID,
+		IsActive:      false,
+		Status:        domain.AccountStatusActive,
+		CreatedAt:     time.Now().UTC(),
+		UpdatedAt:     time.Now().UTC(),
 	}
 
 	if err := s.accountRepo.Create(ctx, newAcc); err != nil {
@@ -1032,29 +1070,146 @@ func (s *OAuthService) RefreshTokenVia(ctx context.Context, refreshToken, proxyU
 		return nil, errors.New("google oauth client credentials not found; please ensure Antigravity 2.0 is installed or set ANTIGRAVITY_CLIENT_ID and ANTIGRAVITY_CLIENT_SECRET")
 	}
 
-	// Like ExchangeCodeVia, probe candidate secrets on an "invalid_client" response so a fresh
-	// process (which starts from a guessed pairing) recovers the correct client_secret.
+	// Google binds a refresh token to the OAuth client that issued it, so the renewal must use that same
+	// client. An account that remembers its client uses it, and only it. One that does not (it predates
+	// the binding, or was imported) is tried against every client found on this machine, and the one that
+	// works is recorded: that is how a token issued by another Antigravity client keeps renewing.
+	acc := s.accountForRefreshToken(ctx, refreshToken)
+	bound := acc != nil && acc.OAuthClientID != ""
+	clientIDs := s.learnClientIDs()
+	if bound {
+		clientIDs = []string{acc.OAuthClientID}
+	}
+
 	var lastErr error
-	for _, secret := range secrets {
-		tokenResp, invalidClient, err := s.refreshOnce(ctx, refreshToken, secret, proxyURL)
+	for _, clientID := range clientIDs {
+		tokenResp, mismatch, unpaired, err := s.refreshWithClient(ctx, clientID, refreshToken, secrets, proxyURL)
 		if err == nil {
-			s.rememberSecret(secret)
+			tokenResp.ClientID = clientID
+			if acc != nil && acc.OAuthClientID != clientID {
+				s.recordClientID(ctx, acc.ID, clientID)
+			}
 			return tokenResp, nil
 		}
 		lastErr = err
-		if invalidClient {
-			continue
+		if (mismatch || unpaired) && !bound {
+			continue // not this client's token (or no secret pairs with it): try the next one
 		}
-		return nil, err // invalid_grant (revoked token) or transport error — do not keep probing
+		return nil, err // invalid_grant (revoked token), a bound client that refuses, or a transport error
 	}
 	return nil, lastErr
 }
 
-// refreshOnce performs a single refresh-token grant with the given client_secret, reporting whether
-// a failure was an "invalid_client" error so the caller can try the next candidate secret.
-func (s *OAuthService) refreshOnce(ctx context.Context, refreshToken, clientSecret, proxyURL string) (*TokenResponse, bool, error) {
+// refreshWithClient renews a token with one client id, probing the candidate secrets like
+// ExchangeCodeVia does on "invalid_client". mismatch reports that Google says this client did not issue
+// the token (unauthorized_client); unpaired that none of the secrets pair with the client id, which
+// settles nothing about the token.
+func (s *OAuthService) refreshWithClient(ctx context.Context, clientID, refreshToken string, secrets []string, proxyURL string) (resp *TokenResponse, mismatch, unpaired bool, err error) {
+	var lastErr error
+	sawInvalidClient := false
+	for _, secret := range secrets {
+		tokenResp, invalidClient, unauthorized, rerr := s.refreshOnce(ctx, clientID, refreshToken, secret, proxyURL)
+		if rerr == nil {
+			s.rememberSecret(secret)
+			return tokenResp, false, false, nil
+		}
+		lastErr = rerr
+		switch {
+		case invalidClient:
+			sawInvalidClient = true
+			continue // wrong secret for this client id: try the next candidate
+		case unauthorized:
+			return nil, true, false, rerr
+		}
+		return nil, false, false, rerr // invalid_grant (revoked token) or a transport error: do not keep probing
+	}
+	return nil, false, sawInvalidClient, lastErr
+}
+
+// learnClientIDs lists the clients an account of unknown origin may have been issued by: the
+// configured one first, then every other found on this machine.
+func (s *OAuthService) learnClientIDs() []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(v string) {
+		if v != "" && !seen[v] {
+			seen[v] = true
+			out = append(out, v)
+		}
+	}
+	add(s.cfg.ClientID)
+	for _, id := range s.allClientIDs {
+		add(id)
+	}
+	return out
+}
+
+// accountForRefreshToken finds the stored account a refresh token belongs to, or nil.
+func (s *OAuthService) accountForRefreshToken(ctx context.Context, refreshToken string) *domain.Account {
+	if s.accountRepo == nil {
+		return nil
+	}
+	accs, err := s.accountRepo.List(ctx)
+	if err != nil {
+		return nil
+	}
+	for _, a := range accs {
+		if a != nil && a.RefreshToken == refreshToken {
+			return a
+		}
+	}
+	return nil
+}
+
+// recordClientID remembers which client an account's token belongs to. Best effort: the renewal
+// already worked, and the next one would simply learn it again.
+func (s *OAuthService) recordClientID(ctx context.Context, accountID, clientID string) {
+	if rec, ok := s.accountRepo.(interface {
+		UpdateOAuthClientID(ctx context.Context, id, clientID string) error
+	}); ok {
+		_ = rec.UpdateOAuthClientID(ctx, accountID, clientID)
+	}
+}
+
+// ProbeResult is what a trial renewal says about a token and a client.
+type ProbeResult int
+
+const (
+	// ProbeOK: the client can renew the token.
+	ProbeOK ProbeResult = iota
+	// ProbeMismatch: Google says the token was issued by a different client.
+	ProbeMismatch
+	// ProbeRevoked: the token itself was revoked or expired (invalid_grant).
+	ProbeRevoked
+	// ProbeInconclusive: no answer that settles it (network, or no secret pairs with the client id).
+	ProbeInconclusive
+)
+
+// ProbeRefresh tries to renew refreshToken with a given client id, through proxyURL, and says what
+// Google answered. It is how a hand-over to a service that renews with its own client (OmniRoute) is
+// checked before it breaks. The new access token is discarded.
+func (s *OAuthService) ProbeRefresh(ctx context.Context, refreshToken, clientID, proxyURL string) ProbeResult {
+	if refreshToken == "" || clientID == "" {
+		return ProbeInconclusive
+	}
+	_, mismatch, _, err := s.refreshWithClient(ctx, clientID, refreshToken, s.candidateSecrets(), proxyURL)
+	switch {
+	case err == nil:
+		return ProbeOK
+	case errors.Is(err, domain.ErrInvalidRefreshToken):
+		return ProbeRevoked
+	case mismatch:
+		return ProbeMismatch
+	}
+	return ProbeInconclusive
+}
+
+// refreshOnce performs a single refresh-token grant with the given client id and secret, reporting
+// whether a failure was "invalid_client" (the secret does not pair with the id: try the next one) or
+// "unauthorized_client" (the id is real but did not issue the token).
+func (s *OAuthService) refreshOnce(ctx context.Context, clientID, refreshToken, clientSecret, proxyURL string) (*TokenResponse, bool, bool, error) {
 	form := url.Values{
-		"client_id":     {s.cfg.ClientID},
+		"client_id":     {clientID},
 		"client_secret": {clientSecret},
 		"refresh_token": {refreshToken},
 		"grant_type":    {"refresh_token"},
@@ -1062,36 +1217,36 @@ func (s *OAuthService) refreshOnce(ctx context.Context, refreshToken, clientSecr
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.cfg.TokenURL, strings.NewReader(form.Encode()))
 	if err != nil {
-		return nil, false, fmt.Errorf("failed to create refresh token request: %w", err)
+		return nil, false, false, fmt.Errorf("failed to create refresh token request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	resp, err := s.clientForProxy(proxyURL).Do(req)
 	if err != nil {
-		return nil, false, fmt.Errorf("token refresh HTTP request failed: %w", err)
+		return nil, false, false, fmt.Errorf("token refresh HTTP request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, false, fmt.Errorf("failed to read token refresh response: %w", err)
+		return nil, false, false, fmt.Errorf("failed to read token refresh response: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
 		if isInvalidGrant(bodyBytes) {
-			return nil, false, domain.ErrInvalidRefreshToken
+			return nil, false, false, domain.ErrInvalidRefreshToken
 		}
-		return nil, isInvalidClient(bodyBytes), fmt.Errorf("token refresh rejected with status %d: %s", resp.StatusCode, string(bodyBytes))
+		return nil, isInvalidClient(bodyBytes), isUnauthorizedClient(bodyBytes), fmt.Errorf("token refresh rejected with status %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
 	var tokenResp TokenResponse
 	if err := json.Unmarshal(bodyBytes, &tokenResp); err != nil {
-		return nil, false, fmt.Errorf("failed to decode token refresh response: %w", err)
+		return nil, false, false, fmt.Errorf("failed to decode token refresh response: %w", err)
 	}
 	if tokenResp.AccessToken == "" {
-		return nil, false, errors.New("received empty access_token on refresh")
+		return nil, false, false, errors.New("received empty access_token on refresh")
 	}
-	return &tokenResp, false, nil
+	return &tokenResp, false, false, nil
 }
 
 // isInvalidGrant reports whether a token-endpoint error body is an OAuth2 "invalid_grant" error.
