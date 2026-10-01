@@ -230,6 +230,30 @@ Requirements: ADS Power running locally with its Local API enabled (default
 > complete the Google sign-in (including 2FA) inside that window. Credentials are never stored by
 > the switcher.
 
+### Putting the OmniRoute proxies into AliasMode
+
+```bash
+antigravity-account-switcher sync-proxies-to-aliasmode --dry-run   # show what would be created
+antigravity-account-switcher sync-proxies-to-aliasmode             # create the profiles
+```
+
+Creates one empty AliasMode profile per proxy of the OmniRoute registry (`proxy-<host>-<port>`),
+already bound to that proxy, ready to be picked when an account is onboarded. The Local API has no
+proxy-registry endpoint, so a profile is the only way a proxy can be stored there.
+
+- **Credentials:** OmniRoute never lists a proxy's password, it only returns it for a proxy assigned to
+  a connection. Those come from OmniRoute. The rest are matched, by `host:port`, against the local proxy
+  pool (paste the provider's table into the dashboard's **Proxy Pool**, or use the config's `proxies`);
+  proxies with no credentials anywhere are reported and skipped. Passwords are never printed.
+- **Safe to repeat:** a proxy whose profile name already exists is left alone, so a second run only adds
+  what was missing. (The Local API does not report a profile's proxy, so a profile you made by hand with
+  the same proxy under another name is not recognized.)
+- **Local only:** the profile API must be on this machine, since the credentials are sent to it. Check the
+  result in AliasMode's **Proxy** column, and prove the isolation (the profile's IP must be the
+  proxy's) before signing in to any account.
+
+---
+
 ### Exporting accounts to OmniRoute
 
 The `export-omniroute` command sends the accounts managed here into

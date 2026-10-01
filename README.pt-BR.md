@@ -232,6 +232,30 @@ Pré-requisito: ADS Power rodando localmente com a Local API habilitada (padrão
 > O login é **assistido**: o switcher abre o perfil isolado na tela de consentimento e você conclui
 > o login do Google (incluindo 2FA) dentro daquela janela. O switcher nunca armazena credenciais.
 
+### Levando os proxies do OmniRoute pro AliasMode
+
+```bash
+antigravity-account-switcher sync-proxies-to-aliasmode --dry-run   # mostra o que seria criado
+antigravity-account-switcher sync-proxies-to-aliasmode             # cria os perfis
+```
+
+Cria um perfil vazio do AliasMode por proxy do registro do OmniRoute (`proxy-<host>-<porta>`), já
+ligado a esse proxy, pronto pra ser escolhido ao adicionar uma conta. A Local API não tem endpoint de
+registro de proxies, então um perfil é a única forma de guardar um proxy lá.
+
+- **Credenciais:** o OmniRoute nunca lista a senha de um proxy, só a devolve pra um proxy atribuído a
+  uma conexão. Esses vêm do OmniRoute. Os demais são cruzados, por `host:porta`, com o pool de proxies
+  local (cole a tabela do provedor no **Proxy Pool** do dashboard, ou use o `proxies` da config);
+  proxies sem credencial em lugar nenhum são reportados e pulados. As senhas nunca são impressas.
+- **Pode repetir:** um proxy cujo perfil já existe com esse nome é deixado quieto, então uma segunda
+  rodada só acrescenta o que faltava. (A Local API não informa o proxy de um perfil, então um perfil
+  feito à mão com o mesmo proxy sob outro nome não é reconhecido.)
+- **Só local:** a API de perfis precisa estar nesta máquina, já que as credenciais são enviadas a ela.
+  Confira o resultado na coluna **Proxy** do AliasMode e prove o isolamento (o IP do perfil tem que ser
+  o do proxy) antes de entrar em qualquer conta.
+
+---
+
 ### Exportando contas para o OmniRoute
 
 O comando `export-omniroute` envia as contas gerenciadas aqui para o
